@@ -1,6 +1,6 @@
 # Xtower-Plugin
 
-Xtower-Plugin 是一个原有的 JS 功能集成 Plugin，包括了随机歌词，聪明Bingo，谁是卧底（测试），狼人杀（测试）功能，后续可能会继续添加。
+Xtower-Plugin 是一个原有的 JS 功能集成 Plugin，包括了随机歌词，聪明Bingo，俄罗斯转盘，谁是卧底（测试），狼人杀（测试）功能，自定义速算（测试），后续可能会继续添加。
 
 ## 安装
 
@@ -26,6 +26,16 @@ cd ./plugins/Xtower-Plugin/
 #安装插件所需依赖
 pnpm install -P
 ```
+> 使用Gitcode
+
+```
+#安装插件本体
+git clone --depth=1 https://gitcode.com/Sczr0/Xtower-Plugin.git ./plugins/Xtower-Plugin/ 
+#进入插件目录
+cd ./plugins/Xtower-Plugin/ 
+#安装插件所需依赖
+pnpm install -P
+```
 > [!TIP]
 > 如果安装依赖时速度过慢，运行：
 > 
@@ -34,6 +44,9 @@ pnpm install -P
 >```
 
 ## 功能
+
+## 帮助
+最简单最简单的就是先#弦塔帮助啦，帮助里有常用的代码，如果要完整的代码看看下面
 
 ### 随机歌词
 
@@ -187,4 +200,3 @@ PS：如果不想这么麻烦地配置，复制以下指令可以进行默认配
 | **`#旋转`**<br>**`#转`** | **轮到你时**，消耗一次机会来随机旋转弹巢，改变子弹位置。每人初始拥有 **4** 次旋转机会。 |
 | **`#开枪`** | **轮到你时**，对自己扣下扳机。 |
 | **`#结束转盘`**<br>**`#结束轮盘`** | 由房主强制结束当前游戏。 |
-
