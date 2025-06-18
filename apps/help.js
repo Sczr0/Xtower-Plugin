@@ -21,6 +21,7 @@ export class XtowerHelp extends plugin {
   async showHelp (e) {
     const helpMsg = `Xtower-Plugin 功能帮助
 --------------------
+建议下方功能单独建一个游戏群使用捏
 【随机歌词】
 • #抽歌词 ：随机抽取歌词
 • #抽歌词 <数量> ：批量抽取歌词
