@@ -1,3 +1,7 @@
+import plugin from '../../../lib/plugins/plugin.js';
+
+// ---- 功能函数 (保持不变) ----
+
 function normalizeString(str) {
   let result = '';
   for (let i = 0; i < str.length; i++) {
@@ -86,13 +90,16 @@ function generate24PointPuzzle(min = 1, max = 10) {
   }
 }
 
+
+// ---- 插件主类 ----
+
 export class twentyFourGame extends plugin {
   constructor() {
     super({
       name: '24点游戏',
       dsc: '24点出题、判题、游戏、求解',
       event: 'message',
-      priority: 500,
+      priority: 100, // 调整了优先级，确保能优先匹配
       rule: [
         {
           reg: '^#?(24点|开始24点|出题)$',
@@ -115,49 +122,76 @@ export class twentyFourGame extends plugin {
           fnc: 'showHelp'
         },
         {
-          reg: /^(?=.*\d)(?=.*[+\-*/×÷（）()])[\d\s()（）+*/-×÷.]+$/,
+          // 修正了正则表达式中 `-` 的问题
+          reg: /^(?=.*\d)(?=.*[+\-*\/×÷（）()])[\d\s()（）+*\/\-×÷.]+$/,
           fnc: 'handleAnswer'
         }
       ]
     });
-
-    this.gameSession = new Map();
   }
 
+  // 获取会话ID
   getSessionId(e) {
-    return e.isGroup ? e.group_id : e.user_id;
+    return e.isGroup ? `${e.group_id}_${e.user_id}` : e.user_id;
+  }
+  
+  // 获取Redis键
+  getRedisKey(e) {
+      return `Yunzai:xtower-plugin:24game:${this.getSessionId(e)}`;
   }
 
+  // 开始游戏 (使用Redis)
   async startGame(e) {
-    const sessionId = this.getSessionId(e);
-    if (this.gameSession.has(sessionId)) {
-      const existingGame = this.gameSession.get(sessionId);
+    const redisKey = this.getRedisKey(e);
+
+    if (await redis.get(redisKey)) {
+      const existingGameRaw = await redis.get(redisKey);
+      const existingGame = JSON.parse(existingGameRaw);
       await e.reply(`你已经有一个游戏在进行中了！\n题目是：[${existingGame.numbers.join(', ')}]`, true);
       return;
     }
+
     const puzzle = generate24PointPuzzle();
-    this.gameSession.set(sessionId, puzzle);
+    // 设置15分钟过期时间
+    await redis.set(redisKey, JSON.stringify(puzzle), { EX: 60 * 15 }); 
+    
     const msg = `新的一局24点开始啦！\n请用下面这四个数字算出24：\n【 ${puzzle.numbers.join(', ')} 】\n请直接发送你的算式，如: (8-2)*4`;
     await e.reply(msg, true);
   }
   
+  // 处理答案 (使用Redis)
   async handleAnswer(e) {
-    const sessionId = this.getSessionId(e);
-    if (!this.gameSession.has(sessionId)) return false;
-    const puzzle = this.gameSession.get(sessionId);
+    const redisKey = this.getRedisKey(e);
+    const gameDataRaw = await redis.get(redisKey);
+
+    if (!gameDataRaw) {
+      return false; 
+    }
+    
+    const puzzle = JSON.parse(gameDataRaw);
     const result = judgeExpression(e.msg, puzzle.numbers, 24);
+
     if (result.success) {
       await e.reply(`回答正确！恭喜你！\n${result.message}`, true);
-      this.gameSession.delete(sessionId);
+      await redis.del(redisKey);
     } else {
       await e.reply(result.message, true);
     }
   }
 
+  // 求解自定义题目 (使用Redis进行反作弊检查)
   async solveCustomProblem(e) {
-    const sessionId = this.getSessionId(e);
-    // 1. 解析用户输入的数字
-    const numbersStr = e.reg.exec(e.msg)[1];
+    const redisKey = this.getRedisKey(e);
+
+    const regex = /^#?求解\s*([\d\s,]+)$/;
+    const match = regex.exec(e.msg);
+
+    if (!match || !match[1]) {
+      e.reply('处理求解指令时发生内部错误，无法解析数字。');
+      return false;
+    }
+
+    const numbersStr = match[1];
     const customNumbers = numbersStr.split(/[\s,]+/).filter(n => n).map(Number);
     
     if (customNumbers.some(isNaN) || customNumbers.length === 0) {
@@ -165,10 +199,9 @@ export class twentyFourGame extends plugin {
       return;
     }
 
-    // 2. 反作弊检查
-    if (this.gameSession.has(sessionId)) {
-      const gameNumbers = this.gameSession.get(sessionId).numbers;
-      // 排序后比较，确保与顺序无关
+    const gameDataRaw = await redis.get(redisKey);
+    if (gameDataRaw) {
+      const gameNumbers = JSON.parse(gameDataRaw).numbers;
       const sortedGameNumbers = [...gameNumbers].sort((a,b) => a-b);
       const sortedCustomNumbers = [...customNumbers].sort((a,b) => a-b);
 
@@ -178,7 +211,6 @@ export class twentyFourGame extends plugin {
       }
     }
 
-    // 3. 执行求解
     const result = solveTargetNumber(customNumbers, 24);
     if (result.canSolve) {
       await e.reply(`[${customNumbers.join(', ')}] 的一个解是：\n${result.solution}`, true);
@@ -187,33 +219,39 @@ export class twentyFourGame extends plugin {
     }
   }
 
+  // 获取答案 (使用Redis)
   async getAnswer(e) {
-    const sessionId = this.getSessionId(e);
-    if (!this.gameSession.has(sessionId)) {
+    const redisKey = this.getRedisKey(e);
+    const gameDataRaw = await redis.get(redisKey);
+
+    if (!gameDataRaw) {
       await e.reply('当前没有正在进行的24点游戏哦，发送 #24点 开始一局吧！', true);
       return;
     }
-    const puzzle = this.gameSession.get(sessionId);
+    const puzzle = JSON.parse(gameDataRaw);
     await e.reply(`参考答案是：${puzzle.solution}\n本局游戏已结束。`, true);
-    this.gameSession.delete(sessionId);
+    await redis.del(redisKey);
   }
   
+  // 结束游戏 (使用Redis)
   async endGame(e) {
-    const sessionId = this.getSessionId(e);
-    if (this.gameSession.has(sessionId)) {
-      this.gameSession.delete(sessionId);
+    const redisKey = this.getRedisKey(e);
+    
+    if (await redis.get(redisKey)) {
+      await redis.del(redisKey);
       await e.reply('好的，本局24点游戏已结束。', true);
     } else {
       await e.reply('当前没有正在进行的24点游戏哦。', true);
     }
   }
 
+  // 显示帮助
   async showHelp(e) {
     const helpMsg = [
       '--- 24点游戏帮助 ---\n',
       '#24点 : 开始一局新游戏\n',
       '发送算式 (如 8/2+2*10 ) : 提交答案\n',
-      '#求解 1 2 3 4 : 求解指定的数字组合\n', // 新增帮助条目
+      '#求解 1 2 3 4 : 求解指定的数字组合\n',
       '#答案 : 查看当前题目答案并结束\n',
       '#结束24点 : 放弃并结束当前游戏'
     ].join('');
