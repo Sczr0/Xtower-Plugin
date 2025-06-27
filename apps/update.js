@@ -2,6 +2,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { exec, execSync } = require("child_process");
 import lodash from 'lodash';
+import common from '../../../lib/common/common.js';
 
 const PLUGIN_NAME = 'Xtower-Plugin';
 const PLUGIN_PATH = `./plugins/${PLUGIN_NAME}/`;
@@ -75,7 +76,7 @@ export class xtowerUpdate extends plugin {
         }
     }
 
-    async updatePlugin(e) {
+        async updatePlugin(e) {
         if (!e.isMaster) {
             return e.reply('暂无权限，只有主人才能操作哦~');
         }
@@ -111,13 +112,20 @@ export class xtowerUpdate extends plugin {
                 await e.reply(`[${PLUGIN_NAME}] 已经是最新版本啦！\n最后更新时间: ${newTime}`);
             } else {
                 await e.reply(`[${PLUGIN_NAME}] 更新成功！\n最后更新时间: ${newTime}`);
-                const log = await getUpdateLog(oldCommitId, e);
-                if (log.length > 0) {
-                    let forwardMsg = await e.reply(await e.makeForwardMsg(log));
-                    if (!forwardMsg) {
-                        e.reply(log.join('\n'));
+                
+                const logMessages = await getUpdateLog(oldCommitId);
+                if (logMessages.length > 0) {
+                    let forwardMsg = await common.makeForwardMsg(e, logMessages, `[${PLUGIN_NAME}] 更新日志`);
+                    if (forwardMsg) {
+                        await e.reply(forwardMsg);
+                    } else {
+                        // 提取纯文本进行降级回复
+                        const plainTextLog = logMessages.map(item => item.message).join('\n');
+                        e.reply(plainTextLog);
                     }
                 }
+                // --- 结束修复 ---
+                
                 await e.reply('更新已应用，部分功能可能需要重启Yunzai生效。');
             }
         } catch (error) {
