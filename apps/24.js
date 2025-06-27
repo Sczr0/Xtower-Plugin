@@ -1,7 +1,3 @@
-import plugin from '../../../lib/plugins/plugin.js';
-
-// ---- 功能函数 (保持不变) ----
-
 function normalizeString(str) {
   let result = '';
   for (let i = 0; i < str.length; i++) {
@@ -99,7 +95,7 @@ export class twentyFourGame extends plugin {
       name: '24点游戏',
       dsc: '24点出题、判题、游戏、求解',
       event: 'message',
-      priority: 100, // 调整了优先级，确保能优先匹配
+      priority: 100,
       rule: [
         {
           reg: '^#?(24点|开始24点|出题)$',
@@ -155,7 +151,7 @@ export class twentyFourGame extends plugin {
     // 设置15分钟过期时间
     await redis.set(redisKey, JSON.stringify(puzzle), { EX: 60 * 15 }); 
     
-    const msg = `新的一局24点开始啦！\n请用下面这四个数字算出24：\n【 ${puzzle.numbers.join(', ')} 】\n请直接发送你的算式，如: (8-2)*4`;
+    const msg = `新的一局24点开始啦！\n请用下面这四个数字算出24：\n【 ${puzzle.numbers.join(', ')} 】\n请直接发送你的算式，如: (8-2)*4，不用发等于号`;
     await e.reply(msg, true);
   }
   
@@ -179,7 +175,7 @@ export class twentyFourGame extends plugin {
     }
   }
 
-  // 求解自定义题目 (使用Redis进行反作弊检查)
+  // 求解自定义题目 (进行反作弊检查)
   async solveCustomProblem(e) {
     const redisKey = this.getRedisKey(e);
 
@@ -219,7 +215,7 @@ export class twentyFourGame extends plugin {
     }
   }
 
-  // 获取答案 (使用Redis)
+  // 获取答案
   async getAnswer(e) {
     const redisKey = this.getRedisKey(e);
     const gameDataRaw = await redis.get(redisKey);
@@ -233,7 +229,7 @@ export class twentyFourGame extends plugin {
     await redis.del(redisKey);
   }
   
-  // 结束游戏 (使用Redis)
+  // 结束游戏
   async endGame(e) {
     const redisKey = this.getRedisKey(e);
     
