@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>你宁可-题目编辑器 (v2.0)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #1a1a1a;
+            border-bottom: 2px solid #e8e8e8;
+            padding-bottom: 10px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #d9d9d9;
+            box-sizing: border-box;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #1890ff;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #40a9ff;
+        }
+        button.danger {
+            background-color: #ff4d4f;
+        }
+        button.danger:hover {
+            background-color: #ff7875;
+        }
+        button.success {
+            background-color: #52c41a;
+        }
+        button.success:hover {
+            background-color: #73d13d;
+        }
+        .group-container {
+            background-color: #fafafa;
+            border: 1px solid #e8e8e8;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .group-header input {
+            font-size: 20px;
+            font-weight: bold;
+            border: none;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            width: 70%;
+        }
+        .group-header input:focus {
+            outline: none;
+            border-bottom: 2px solid #1890ff;
+        }
+        .question-card {
+            background-color: #fff;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .question-card .id {
+            font-weight: bold;
+            color: #888;
+        }
+        .question-card .options {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .question-card .option-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .question-card .option-item label {
+            font-weight: bold;
+            width: 20px;
+        }
+        .question-card .option-item input {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+        }
+        .question-card .actions {
+            text-align: right;
+        }
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            opacity: 0;
+            transition: opacity 0.5s;
+            z-index: 1000;
+        }
+        .export-options {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>你宁可 - 题目编辑器 v2.0</h1>
+        
+        <h2>1. 导入数据</h2>
+        <p>将 `questions.json` 文件的内容粘贴到下方文本框中。</p>
+        <textarea id="sourceJson" placeholder="在此处粘贴你的JSON内容..."></textarea>
+        <button id="loadBtn">加载/渲染编辑器</button>
+
+        <hr style="margin: 30px 0;">
+
+        <h2>2. 编辑题目</h2>
+        <div id="editorContainer">
+            <p style="color: #888;">加载数据后，编辑器将在此处显示。</p>
+        </div>
+        <button id="addGroupBtn" class="success" style="display: none;">+ 添加新分组</button>
+
+        <hr style="margin: 30px 0;">
+
+        <h2>3. 导出数据</h2>
+        <div class="export-options">
+            <button id="generateBtn" style="display: none;">生成新 JSON</button>
+            <div id="normalize-container" style="display: none;">
+                <input type="checkbox" id="normalizeIdCheckbox" checked>
+                <label for="normalizeIdCheckbox">规范化问题ID (按分组重新编号，如1001, 2001...)</label>
+            </div>
+        </div>
+        <button id="copyBtn" class="success" style="display: none;">复制到剪贴板</button>
+        <textarea id="resultJson" placeholder="生成的结果将显示在此处..." readonly></textarea>
+    </div>
+    
+    <div id="toast"></div>
+
+    <script>
+        const sourceJsonEl = document.getElementById('sourceJson');
+        const loadBtn = document.getElementById('loadBtn');
+        const editorContainer = document.getElementById('editorContainer');
+        const addGroupBtn = document.getElementById('addGroupBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const copyBtn = document.getElementById('copyBtn');
+        const resultJsonEl = document.getElementById('resultJson');
+        const toastEl = document.getElementById('toast');
+        const normalizeContainer = document.getElementById('normalize-container');
+        const normalizeIdCheckbox = document.getElementById('normalizeIdCheckbox');
+
+        // 初始化时，将示例JSON放入输入框
+        sourceJsonEl.value = JSON.stringify({
+            "不知道哪来的二选一": {
+                "1001": { "A": "用洗面奶刷牙", "B": "用牙膏洗脸" },
+                "1002": { "A": "吃面条只能用勺子", "B": "喝珍珠奶茶只能用细吸管" }
+            },
+            "弦塔乱出的题目": {
+                "2001": { "A": "每次说话总有人当场自动化抬杠", "B": "每次说话前都要说一句「现在是老子的发言时间」" }
+            }
+        }, null, 2);
+
+        function showToast(message) {
+            toastEl.textContent = message;
+            toastEl.style.opacity = '1';
+            setTimeout(() => {
+                toastEl.style.opacity = '0';
+            }, 2000);
+        }
+
+        function renderEditor(data) {
+            editorContainer.innerHTML = '';
+            if (Object.keys(data).length === 0) {
+                 editorContainer.innerHTML = '<p style="color: #888;">当前没有分组，请点击下方按钮添加一个。</p>';
+            }
+            for (const groupName in data) {
+                const group = data[groupName];
+                const groupEl = document.createElement('div');
+                groupEl.className = 'group-container';
+                groupEl.dataset.group = groupName;
+
+                let questionsHtml = '';
+                for (const qId in group) {
+                    const question = group[qId];
+                    questionsHtml += `
+                        <div class="question-card" data-id="${qId}">
+                            <div class="id">ID: ${qId}</div>
+                            <div class="options">
+                                <div class="option-item">
+                                    <label>A.</label>
+                                    <input type="text" value="${question.A.replace(/"/g, '"')}" data-option="A">
+                                </div>
+                                <div class="option-item">
+                                    <label>B.</label>
+                                    <input type="text" value="${question.B.replace(/"/g, '"')}" data-option="B">
+                                </div>
+                            </div>
+                            <div class="actions">
+                                <button class="danger" data-action="delete-question">删除问题</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                groupEl.innerHTML = `
+                    <div class="group-header">
+                        <input type="text" class="group-name-input" value="${groupName}">
+                        <div>
+                            <button class="success" data-action="add-question">+ 添加问题</button>
+                            <button class="danger" data-action="delete-group">删除分组</button>
+                        </div>
+                    </div>
+                    ${questionsHtml}
+                `;
+                editorContainer.appendChild(groupEl);
+            }
+        }
+
+        loadBtn.addEventListener('click', () => {
+            try {
+                const data = JSON.parse(sourceJsonEl.value);
+                renderEditor(data);
+                addGroupBtn.style.display = 'inline-block';
+                generateBtn.style.display = 'inline-block';
+                copyBtn.style.display = 'inline-block';
+                normalizeContainer.style.display = 'block';
+                showToast('加载成功！');
+            } catch (e) {
+                alert('JSON格式错误，请检查！\n' + e.message);
+            }
+        });
+
+        addGroupBtn.addEventListener('click', () => {
+            const newGroupName = prompt('请输入新的分组名称：');
+            if (newGroupName && newGroupName.trim() !== '') {
+                const newGroupEl = document.createElement('div');
+                newGroupEl.className = 'group-container';
+                newGroupEl.dataset.group = newGroupName;
+                newGroupEl.innerHTML = `
+                    <div class="group-header">
+                        <input type="text" class="group-name-input" value="${newGroupName}">
+                        <div>
+                            <button class="success" data-action="add-question">+ 添加问题</button>
+                            <button class="danger" data-action="delete-group">删除分组</button>
+                        </div>
+                    </div>
+                `;
+                if (editorContainer.querySelector('p')) {
+                    editorContainer.innerHTML = '';
+                }
+                editorContainer.appendChild(newGroupEl);
+                showToast(`分组 "${newGroupName}" 已添加。`);
+            }
+        });
+
+        editorContainer.addEventListener('click', (e) => {
+            const target = e.target;
+            const action = target.dataset.action;
+            if (!action) return;
+
+            const groupContainer = target.closest('.group-container');
+
+            if (action === 'add-question') {
+                const newId = Date.now();
+                const questionCard = document.createElement('div');
+                questionCard.className = 'question-card';
+                questionCard.dataset.id = newId;
+                questionCard.innerHTML = `
+                    <div class="id">ID: ${newId} (新)</div>
+                    <div class="options">
+                        <div class="option-item">
+                            <label>A.</label>
+                            <input type="text" value="" data-option="A">
+                        </div>
+                        <div class="option-item">
+                            <label>B.</label>
+                            <input type="text" value="" data-option="B">
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button class="danger" data-action="delete-question">删除问题</button>
+                    </div>
+                `;
+                groupContainer.appendChild(questionCard);
+                showToast('新问题已添加，请填写内容。');
+            } else if (action === 'delete-question') {
+                if (confirm('确定要删除这个问题吗？')) {
+                    target.closest('.question-card').remove();
+                    showToast('问题已删除。');
+                }
+            } else if (action === 'delete-group') {
+                const currentGroupName = groupContainer.querySelector('.group-name-input').value;
+                if (confirm(`确定要删除整个分组 "${currentGroupName}" 及其所有问题吗？`)) {
+                    groupContainer.remove();
+                    showToast(`分组 "${currentGroupName}" 已删除。`);
+                }
+            }
+        });
+        
+        generateBtn.addEventListener('click', () => {
+            const newData = {};
+            const groupContainers = editorContainer.querySelectorAll('.group-container');
+
+            if (groupContainers.length === 0) {
+                resultJsonEl.value = '{}';
+                showToast('已生成空 JSON。');
+                return;
+            }
+
+            let hasError = false;
+            let groupIndex = 0;
+            const shouldNormalize = normalizeIdCheckbox.checked;
+
+            groupContainers.forEach(groupEl => {
+                if (hasError) return;
+                const groupNameInput = groupEl.querySelector('.group-name-input');
+                const newGroupName = groupNameInput.value.trim();
+                
+                if (!newGroupName) {
+                    alert('错误：发现一个未命名的分组，请填写分组名！');
+                    groupNameInput.style.border = '2px solid red';
+                    hasError = true;
+                    return;
+                }
+                groupNameInput.style.border = '';
+
+                if (newData[newGroupName]) {
+                    alert(`错误：分组名称 "${newGroupName}" 重复了！请修改。`);
+                    groupNameInput.style.border = '2px solid red';
+                    hasError = true;
+                    return;
+                }
+                newData[newGroupName] = {};
+
+                const questionCards = groupEl.querySelectorAll('.question-card');
+                let questionCounter = 0;
+                const baseId = (groupIndex + 1) * 1000 + 1;
+
+                questionCards.forEach(cardEl => {
+                    const id = shouldNormalize ? (baseId + questionCounter) : cardEl.dataset.id;
+                    const optionA = cardEl.querySelector('[data-option="A"]').value;
+                    const optionB = cardEl.querySelector('[data-option="B"]').value;
+                    newData[newGroupName][id] = { A: optionA, B: optionB };
+                    questionCounter++;
+                });
+                groupIndex++;
+            });
+
+            if (!hasError) {
+                resultJsonEl.value = JSON.stringify(newData, null, 2);
+                showToast('新 JSON 已成功生成！');
+            }
+        });
+
+        copyBtn.addEventListener('click', () => {
+            if (!resultJsonEl.value) {
+                alert('请先生成 JSON 后再复制！');
+                return;
+            }
+            navigator.clipboard.writeText(resultJsonEl.value).then(() => {
+                showToast('已成功复制到剪贴板！');
+            }, () => {
+                alert('复制失败，您的浏览器可能不支持或权限不足。');
+            });
+        });
+
+    </script>
+</body>
+</html>

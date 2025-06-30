@@ -17,14 +17,14 @@ const plugin_path = path.join(_path, 'plugins', 'Xtower-Plugin');
 // 加载词库
 let wordPairs = [];
 try {
-  const wordsPath = path.join(plugin_path, 'resource', 'word_pairs.json');
+  const wordsPath = path.join(plugin_path, 'resources', 'word_pairs.json');
   wordPairs = JSON.parse(fs.readFileSync(wordsPath, 'utf8'));
   if (!Array.isArray(wordPairs) || wordPairs.length === 0) {
-    logger.warn('[谁是卧底] 词库 resource/word_pairs.json 加载失败或为空。');
+    logger.warn('[谁是卧底] 词库 resources/word_pairs.json 加载失败或为空。');
   }
 } catch (error) {
   logger.error('[谁是卧底] 加载词库失败', error);
-  logger.warn('[谁是卧底] 请在 plugins/Xtower-Plugin/resource/ 目录下创建 word_pairs.json。');
+  logger.warn('[谁是卧底] 请在 plugins/Xtower-Plugin/resources/ 目录下创建 word_pairs.json。');
 }
 
 export class undercover extends plugin {
