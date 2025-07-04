@@ -837,7 +837,7 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(gameInfo.groupId, game, gameStatus.winner);
     } else {
-      game.gameState.status = game.gameState.currentPhase === 'DAY' ? 'night' : 'day_speak'
+      game.gameState.status = 'night'; // 猎人开枪后，如果游戏未结束，进入夜晚
       await this.saveGame(gameInfo.groupId, game)
       await this.transitionToNextPhase(gameInfo.groupId, game)
     }
@@ -1059,6 +1059,8 @@ export class WerewolfPlugin extends plugin {
   }
 
   async processVoteEnd(groupId, game) {
+    // 确认我们操作的是最新的游戏实例
+    game = await this.getGameInstance(groupId);
     if (!game || game.gameState.status !== 'day_vote') return
     game.gameState.deadline = null
     await this.sendSystemGroupMsg(groupId, "投票时间结束，正在计票...")
@@ -1096,7 +1098,8 @@ export class WerewolfPlugin extends plugin {
     const hunterInfo = game.getPlayerInfo(game.gameState.hunterNeedsToShoot)
     await this.sendSystemGroupMsg(groupId, `猎人 ${hunterInfo} 选择不开枪（或超时）。`)
 
-    game.gameState.status = game.gameState.currentPhase === 'DAY' ? 'night' : 'day_speak'
+    // game.gameState.status = game.gameState.currentPhase === 'DAY' ? 'night' : 'day_speak' // 移除对 currentPhase 的依赖
+    game.gameState.status = 'night'; // 猎人开枪后，如果游戏未结束，进入夜晚
     await this.saveGame(groupId, game)
     await this.transitionToNextPhase(groupId, game)
   }
