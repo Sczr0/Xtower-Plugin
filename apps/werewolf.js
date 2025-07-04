@@ -14,9 +14,18 @@ class GameDataManager {
   static async load(groupId) {
     const key = this.getRedisKey(groupId)
     try {
-      const data = await redis.get(key)
-      if (!data) return null
-      return JSON.parse(data)
+      const hashData = await redis.hGetAll(key)
+      if (!hashData || Object.keys(hashData).length === 0) return null
+
+      // 从Hash的各个字段重组游戏数据
+      const gameData = {
+        players: JSON.parse(hashData.players || '[]'),
+        roles: JSON.parse(hashData.roles || '{}'),
+        gameState: JSON.parse(hashData.gameState || '{}'),
+        potions: JSON.parse(hashData.potions || '{}'),
+        userGroupMap: JSON.parse(hashData.userGroupMap || '{}'),
+      }
+      return gameData
     } catch (err) {
       console.error(`[${PLUGIN_NAME}] 从 Redis 读取或解析游戏数据失败 (${groupId}):`, err)
       await redis.del(key)
@@ -24,12 +33,29 @@ class GameDataManager {
     }
   }
 
-  static async save(groupId, data) {
+  static async saveAll(groupId, data) {
     const key = this.getRedisKey(groupId)
     try {
-      await redis.set(key, JSON.stringify(data, null, 2), { EX: GAME_DATA_EXPIRATION })
+      const pipeline = redis.pipeline()
+      pipeline.hSet(key, 'players', JSON.stringify(data.players || []))
+      pipeline.hSet(key, 'roles', JSON.stringify(data.roles || {}))
+      pipeline.hSet(key, 'gameState', JSON.stringify(data.gameState || {}))
+      pipeline.hSet(key, 'potions', JSON.stringify(data.potions || {}))
+      pipeline.hSet(key, 'userGroupMap', JSON.stringify(data.userGroupMap || {}))
+      pipeline.expire(key, GAME_DATA_EXPIRATION)
+      await pipeline.exec()
     } catch (err) {
-      console.error(`[${PLUGIN_NAME}] 保存游戏数据到 Redis 失败 (${groupId}):`, err)
+      console.error(`[${PLUGIN_NAME}] 全量保存游戏数据到 Redis 失败 (${groupId}):`, err)
+    }
+  }
+
+  static async saveField(groupId, fieldName, data) {
+    const key = this.getRedisKey(groupId)
+    try {
+      await redis.hSet(key, fieldName, JSON.stringify(data))
+      await redis.expire(key, GAME_DATA_EXPIRATION)
+    } catch (err) {
+      console.error(`[${PLUGIN_NAME}] 更新游戏字段 [${fieldName}] 到 Redis 失败 (${groupId}):`, err)
     }
   }
 
@@ -560,6 +586,7 @@ export class WerewolfPlugin extends plugin {
     this.timerCheckInterval = setInterval(() => this.checkAllGameTimers(), 5000);
 
     this.gameInstances = new Map();
+    this.userToGroupCache = new Map();
     this.NIGHT_INIT_DURATION = 40 * 1000;
     this.WITCH_ACTION_DURATION = 30 * 1000;
     this.SPEECH_DURATION = 45 * 1000;
@@ -568,28 +595,56 @@ export class WerewolfPlugin extends plugin {
   }
 
   async getGameInstance(groupId, createIfNotExist = false, hostUserId = null, hostNickname = null) {
-    let game = this.gameInstances.get(groupId)
+    let game = this.gameInstances.get(groupId);
     if (!game) {
-      const gameData = await GameDataManager.load(groupId)
+      const gameData = await GameDataManager.load(groupId);
       if (gameData) {
-        game = new WerewolfGame(gameData)
-        this.gameInstances.set(groupId, game)
+        game = new WerewolfGame(gameData);
+        this.gameInstances.set(groupId, game);
+        
+        // 加载游戏后，预热 userToGroupCache
+        if (game.players) {
+            for (const player of game.players) {
+                this.userToGroupCache.set(player.userId, groupId);
+            }
+        }
+
         if (game.gameState.isRunning) {
-          GameCleaner.registerGame(groupId, this)
+          GameCleaner.registerGame(groupId, this);
         }
       } else if (createIfNotExist && hostUserId && hostNickname) {
-        game = new WerewolfGame()
-        this.gameInstances.set(groupId, game)
-        GameCleaner.registerGame(groupId, this)
+        game = new WerewolfGame();
+        this.gameInstances.set(groupId, game);
+        GameCleaner.registerGame(groupId, this);
       }
     }
-    return game
+    return game;
   }
 
-  async saveGame(groupId, game) {
+  // 只更新内存缓存
+  updateMemoryCache(groupId, game) {
     if (game) {
-      this.gameInstances.set(groupId, game)
-      await GameDataManager.save(groupId, game.getGameData())
+      this.gameInstances.set(groupId, game);
+    }
+  }
+
+  // 用于游戏创建、阶段转换等需要全量保存的场景
+  async saveGameAll(groupId, game) {
+    if (game) {
+      await GameDataManager.saveAll(groupId, game.getGameData());
+      this.updateMemoryCache(groupId, game);
+    }
+  }
+  
+  // 用于只更新某个字段的场景
+  async saveGameField(groupId, game, fieldName) {
+    if (game && game[fieldName]) {
+        await GameDataManager.saveField(groupId, fieldName, game[fieldName]);
+        this.updateMemoryCache(groupId, game);
+    } else if (game && typeof game.getGameData === 'function' && game.getGameData()[fieldName]) {
+        // 兼容 getGameData() 的情况
+        await GameDataManager.saveField(groupId, fieldName, game.getGameData()[fieldName]);
+        this.updateMemoryCache(groupId, game);
     }
   }
 
@@ -599,6 +654,8 @@ export class WerewolfPlugin extends plugin {
     if (game) {
       const userIds = game.players.map(p => p.userId)
       if (userIds.length > 0) {
+        // 从内存缓存中删除玩家
+        userIds.forEach(id => this.userToGroupCache.delete(id));
         const keysToDelete = userIds.map(id => `${USER_GROUP_KEY_PREFIX}${id}`)
         await redis.del(keysToDelete)
       }
@@ -617,7 +674,7 @@ export class WerewolfPlugin extends plugin {
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname)
     const initResult = game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId)
-    await this.saveGame(groupId, game)
+    await this.saveGameAll(groupId, game) // 使用全量保存
     return e.reply(initResult.message, true)
   }
 
@@ -644,7 +701,12 @@ export class WerewolfPlugin extends plugin {
     }
 
     const result = await game.addPlayer(e.user_id, e.sender.card || e.sender.nickname, groupId)
-    await this.saveGame(groupId, game)
+    if(result.success) {
+        this.userToGroupCache.set(e.user_id, groupId); // 更新缓存
+        // 更新 players 和 userGroupMap 字段
+        await this.saveGameField(groupId, game, 'players');
+        await this.saveGameField(groupId, game, 'userGroupMap');
+    }
     return e.reply(result.message, false, { at: true })
   }
 
@@ -657,8 +719,14 @@ export class WerewolfPlugin extends plugin {
 
     const result = await game.removePlayer(e.user_id);
     if (result.success) {
-      if (result.gameDissolved) await this.deleteGame(groupId);
-      else await this.saveGame(groupId, game);
+      this.userToGroupCache.delete(e.user_id); // 更新缓存
+      if (result.gameDissolved) {
+          await this.deleteGame(groupId);
+      } else {
+          // 更新 players 和 userGroupMap 字段
+          await this.saveGameField(groupId, game, 'players');
+          await this.saveGameField(groupId, game, 'userGroupMap');
+      }
     }
     return e.reply(result.message, false, { at: true });
   }
@@ -672,14 +740,14 @@ export class WerewolfPlugin extends plugin {
     if (game.gameState.status !== 'waiting') return e.reply(`游戏状态为 ${game.gameState.status}，无法开始。`, true)
 
     const prepareResult = await game.prepareGameStart(this)
-    await this.saveGame(groupId, game)
+    await this.saveGameAll(groupId, game)
     if (!prepareResult.success) return e.reply(prepareResult.message, true)
 
     await e.reply(prepareResult.message, true)
 
     await this.sendRolesToPlayers(groupId, game)
     game.gameState.isRunning = true
-    await this.saveGame(groupId, game)
+    await this.saveGameAll(groupId, game)
     await this.startNightPhase(groupId, game)
   }
 
@@ -688,7 +756,7 @@ export class WerewolfPlugin extends plugin {
     const gameInfo = await this.findUserActiveGame(userId)
     if (!gameInfo) return e.reply('未找到你参与的有效游戏。')
 
-    const game = gameInfo.instance
+    const { groupId, instance: game } = gameInfo;
     if (game.gameState.status !== 'night') return e.reply('当前不是夜晚行动时间。')
 
     let role = null, type = null, targetTempId = null;
@@ -709,11 +777,13 @@ export class WerewolfPlugin extends plugin {
     if (game.players.find(p => p.userId === userId)?.role !== role) return e.reply('你的身份不符。')
 
     const result = game.recordNightAction(role, userId, { type, targetTempId })
-    if (result.success) await this.saveGame(gameInfo.groupId, game)
+    if (result.success) {
+        // 只更新 gameState 字段
+        await this.saveGameField(groupId, game, 'gameState');
+    }
 
     return e.reply(result.message)
   }
-
     async handleWerewolfChat(e) {
     const userId = e.user_id;
 
@@ -792,19 +862,19 @@ export class WerewolfPlugin extends plugin {
     }
   }
 
-  async handleVote(e) {
+    async handleVote(e) {
     const groupId = e.group_id
     if (!groupId) return e.reply("请在群聊中使用此命令。", true)
     const game = await this.getGameInstance(groupId)
     if (!game || game.gameState.status !== 'day_vote') return e.reply("当前不是投票时间。", true)
     let targetTempId = e.msg.match(/\d+/)?.[0]
     if (!targetTempId) return
-    // 允许弃票（#投票 0 或 #投票 00）
     if (targetTempId === '0' || targetTempId === '00') targetTempId = '00'
     else targetTempId = targetTempId.padStart(2, '0')
 
     const result = game.recordVote(e.user_id, targetTempId)
-    await this.saveGame(groupId, game)
+    // 只更新 gameState 字段
+    await this.saveGameField(groupId, game, 'gameState');
     await e.reply(result.message, false, { at: true })
 
     const activePlayerCount = game.players.filter(p => p.isAlive).length
@@ -838,7 +908,7 @@ export class WerewolfPlugin extends plugin {
       await this.endGameFlow(gameInfo.groupId, game, gameStatus.winner);
     } else {
       game.gameState.status = 'night'; // 猎人开枪后，如果游戏未结束，进入夜晚
-      await this.saveGame(gameInfo.groupId, game)
+      await this.saveGameAll(gameInfo.groupId, game)
       await this.transitionToNextPhase(gameInfo.groupId, game)
     }
   }
@@ -972,7 +1042,7 @@ export class WerewolfPlugin extends plugin {
     
     // --- 在这里立即保存 ---
     // 因为 processNightActions 修改了 game.potions 和 player.isAlive 等状态
-    await this.saveGame(groupId, game);
+    await this.saveGameAll(groupId, game);
 
     await this.sendSystemGroupMsg(groupId, result.summary);
 
@@ -1004,7 +1074,7 @@ export class WerewolfPlugin extends plugin {
     
     // 清理一下当前超时的deadline，防止重复触发
     game.gameState.deadline = null;
-    await this.saveGame(groupId, game); // 保存状态
+    await this.saveGameField(groupId, game, 'gameState'); 
 
     const nextSpeakerUserId = game.moveToNextSpeaker();
 
@@ -1023,7 +1093,7 @@ export class WerewolfPlugin extends plugin {
 
     game.gameState.deadline = Date.now() + this.SPEECH_DURATION
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }])
-    await this.saveGame(groupId, game)
+    await this.saveGameField(groupId, game, 'gameState')
 
     const msg = [segment.at(speaker.userId), ` 请开始发言 (${this.SPEECH_DURATION / 1000}秒)。`]
     await this.sendSystemGroupMsg(groupId, msg)
@@ -1052,7 +1122,7 @@ export class WerewolfPlugin extends plugin {
     game.gameState.status = 'day_vote'
     game.gameState.deadline = Date.now() + this.VOTE_DURATION
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }])
-    await this.saveGame(groupId, game)
+    await this.saveGameField(groupId, game, 'gameState')
 
     const alivePlayerList = game.getAlivePlayerList()
     await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号]\n你有 ${this.VOTE_DURATION / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`)
@@ -1066,7 +1136,7 @@ export class WerewolfPlugin extends plugin {
     await this.sendSystemGroupMsg(groupId, "投票时间结束，正在计票...")
 
     const result = game.processVotes()
-    await this.saveGame(groupId, game)
+    await this.saveGameAll(groupId, game)
     await this.sendSystemGroupMsg(groupId, result.summary)
 
     if (result.gameEnded) {
@@ -1083,7 +1153,7 @@ export class WerewolfPlugin extends plugin {
     const hunterUserId = game.gameState.hunterNeedsToShoot
     game.gameState.deadline = Date.now() + this.HUNTER_SHOOT_DURATION
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }])
-    await this.saveGame(groupId, game)
+    await this.saveGameField(groupId, game, 'gameState')
 
     const hunterInfo = game.getPlayerInfo(hunterUserId)
     const alivePlayerList = game.getAlivePlayerList()
@@ -1100,7 +1170,7 @@ export class WerewolfPlugin extends plugin {
 
     // game.gameState.status = game.gameState.currentPhase === 'DAY' ? 'night' : 'day_speak' // 移除对 currentPhase 的依赖
     game.gameState.status = 'night'; // 猎人开枪后，如果游戏未结束，进入夜晚
-    await this.saveGame(groupId, game)
+    await this.saveGameAll(groupId, game)
     await this.transitionToNextPhase(groupId, game)
   }
 
@@ -1150,19 +1220,31 @@ export class WerewolfPlugin extends plugin {
     }
   }
 
-  async findUserActiveGame(userId) {
+    async findUserActiveGame(userId) {
     try {
-      const groupId = await redis.get(`${USER_GROUP_KEY_PREFIX}${userId}`)
+      // 1. 优先从内存缓存中查找
+      let groupId = this.userToGroupCache.get(userId);
+      
+      // 2. 如果内存缓存没有，再查 Redis (作为回退)
+      if (!groupId) {
+          groupId = await redis.get(`${USER_GROUP_KEY_PREFIX}${userId}`);
+          if (groupId) {
+              // 如果 Redis 中有，则更新内存缓存
+              this.userToGroupCache.set(userId, groupId);
+          }
+      }
+
       if (groupId) {
-        const game = await this.getGameInstance(groupId)
+        const game = await this.getGameInstance(groupId);
+        // 确保玩家确实在游戏中并且存活
         if (game && game.players.some(p => p.userId === userId && p.isAlive)) {
-          return { groupId: groupId, instance: game }
+          return { groupId: groupId, instance: game };
         }
       }
     } catch (error) {
-      console.error(`[${PLUGIN_NAME}] 查找用户游戏时出错:`, error)
+      console.error(`[${PLUGIN_NAME}] 查找用户游戏时出错:`, error);
     }
-    return null
+    return null;
   }
 
   async sendSystemGroupMsg(groupId, msg) {
