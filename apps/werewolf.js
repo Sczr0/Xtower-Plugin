@@ -36,14 +36,17 @@ class GameDataManager {
   static async saveAll(groupId, data) {
     const key = this.getRedisKey(groupId)
     try {
-      const pipeline = redis.pipeline()
-      pipeline.hSet(key, 'players', JSON.stringify(data.players || []))
-      pipeline.hSet(key, 'roles', JSON.stringify(data.roles || {}))
-      pipeline.hSet(key, 'gameState', JSON.stringify(data.gameState || {}))
-      pipeline.hSet(key, 'potions', JSON.stringify(data.potions || {}))
-      pipeline.hSet(key, 'userGroupMap', JSON.stringify(data.userGroupMap || {}))
-      pipeline.expire(key, GAME_DATA_EXPIRATION)
-      await pipeline.exec()
+      const multi = redis.multi(); // 获取一个事务对象
+
+      multi.hSet(key, 'players', JSON.stringify(data.players || []));
+      multi.hSet(key, 'roles', JSON.stringify(data.roles || {}));
+      multi.hSet(key, 'gameState', JSON.stringify(data.gameState || {}));
+      multi.hSet(key, 'potions', JSON.stringify(data.potions || {}));
+      multi.hSet(key, 'userGroupMap', JSON.stringify(data.userGroupMap || {}));
+      multi.expire(key, GAME_DATA_EXPIRATION);
+
+      await multi.exec(); // 执行所有排队的命令
+
     } catch (err) {
       console.error(`[${PLUGIN_NAME}] 全量保存游戏数据到 Redis 失败 (${groupId}):`, err)
     }
