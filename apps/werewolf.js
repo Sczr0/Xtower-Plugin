@@ -299,7 +299,7 @@ class WerewolfGame {
     if (guardAction) {
       const target = this.players.find(p => p.tempId === guardAction.targetTempId && p.isAlive);
       if (target && target.userId !== this.gameState.lastProtectedId) {
-        target.isProtected = true; // <--- 恢复的核心逻辑
+        target.isProtected = true;
         guardTargetId = target.userId;
         this.gameState.lastProtectedId = guardTargetId;
         logEvent({ type: 'GUARD_PROTECT', actor: this.getPlayerInfo(Object.keys(this.gameState.nightActions.GUARD)[0]), target: this.getPlayerInfo(target.userId) });
@@ -315,7 +315,7 @@ class WerewolfGame {
     if (killedByWerewolfId) {
       const targetPlayer = this.players.find(p => p.userId === killedByWerewolfId);
       if (targetPlayer) {
-        targetPlayer.isDying = true; // <--- 恢复的核心逻辑
+        targetPlayer.isDying = true;
         deathCauses[targetPlayer.userId] = 'WEREWOLF';
         const werewolfActors = this.players.filter(p => p.role === 'WEREWOLF' && p.isAlive).map(p => this.getPlayerInfo(p.userId));
         logEvent({ type: 'WEREWOLF_ATTACK', actors: werewolfActors, target: this.getPlayerInfo(killedByWerewolfId) });
@@ -330,7 +330,7 @@ class WerewolfGame {
         this.potions.save = false;
         const savedTarget = this.players.find(p => p.tempId === witchAction.targetTempId && p.isAlive);
         if (savedTarget && savedTarget.isDying) {
-          savedTarget.isDying = false; // <--- 恢复的核心逻辑
+          savedTarget.isDying = false;
           witchSavedPlayerId = savedTarget.userId;
           delete deathCauses[savedTarget.userId];
           logEvent({ type: 'WITCH_SAVE', actor: witchInfo, target: this.getPlayerInfo(savedTarget.userId) });
@@ -339,7 +339,7 @@ class WerewolfGame {
         this.potions.kill = false;
         const poisonedTarget = this.players.find(p => p.tempId === witchAction.targetTempId && p.isAlive);
         if (poisonedTarget) {
-          poisonedTarget.isDying = true; // <--- 恢复的核心逻辑
+          poisonedTarget.isDying = true;
           deathCauses[poisonedTarget.userId] = 'WITCH';
           logEvent({ type: 'WITCH_KILL', actor: witchInfo, target: this.getPlayerInfo(poisonedTarget.userId) });
         }
@@ -391,7 +391,7 @@ class WerewolfGame {
     if (deadHunter) {
       this.gameState.status = 'hunter_shooting';
       this.gameState.hunterNeedsToShoot = deadHunter.userId;
-      this.gameState.currentPhase = 'NIGHT'; // <--- 修正：标记猎人夜晚死亡
+      this.gameState.currentPhase = 'NIGHT';
       return {
         success: true,
         summary: finalSummary.join('\n'),
@@ -427,7 +427,6 @@ class WerewolfGame {
     }
     const targetPlayer = this.players.find(p => p.tempId === targetTempId && p.isAlive)
     if (!targetPlayer) return { success: false, message: '投票目标无效或已死亡。' }
-    // 允许投自己
     this.gameState.votes[voter.userId] = targetTempId
     return { success: true, message: `${voter.nickname} (${voter.tempId}号) 投票给了 ${targetPlayer.nickname} (${targetTempId}号)。` }
   }
@@ -1197,7 +1196,7 @@ export class WerewolfPlugin extends plugin {
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }])
     await this.saveGameField(groupId, game, 'gameState')
 
-    const msg = [segment.at(speaker.userId), ` 请开始发言 (${this.SPEECH_DURATION / 1000}秒)。`]
+    const msg = [segment.at(speaker.userId), ` 请开始发言 (${this.SPEECH_DURATION / 1000}秒)\n发送#结束发言或“过”以结束你的发言。`]
     await this.sendSystemGroupMsg(groupId, msg)
   }
 
@@ -1227,7 +1226,7 @@ export class WerewolfPlugin extends plugin {
     await this.saveGameField(groupId, game, 'gameState')
 
     const alivePlayerList = game.getAlivePlayerList()
-    await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号]\n你有 ${this.VOTE_DURATION / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`)
+    await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号] 即可投票\n#投票 0 表示弃票\n你有 ${this.VOTE_DURATION / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`)
     
     const reminderDelay = this.VOTE_DURATION - 15 * 1000; // 提前15秒提醒
     if (reminderDelay > 0) {
