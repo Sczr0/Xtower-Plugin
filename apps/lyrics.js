@@ -815,36 +815,4 @@ export class LyricsPlugin extends plugin {
         }
         this.logger.mark(`目录 ${resolvedTargetDir} 已成功安全删除。`);
     }
-
-    // #validateConfig() 每日自检，检查libraries中路径是否有效
-    // 此函数是可选的，如果之前有，可以保留并确保它修改this.config后调用#saveLyricsDataConfig
-    async #validateConfig() {
-        let changed = false;
-        const validLibraries = {};
-        for (const [name, libPath] of Object.entries(this.config.libraries)) {
-            if (fs.existsSync(libPath)) {
-                validLibraries[name] = libPath;
-            } else {
-                this.logger.warn(`歌词库【${name}】路径 ${libPath} 无效或已丢失，将从配置中移除。`);
-                changed = true;
-                // 同时检查是否有群组关联了这个失效的库
-                Object.entries(this.config.groupMapping).forEach(([groupId, mappedLibName]) => {
-                    if (mappedLibName === name) {
-                        this.logger.warn(`群组 ${groupId} 原关联的歌词库【${name}】已失效，将解除关联。`);
-                        delete this.config.groupMapping[groupId];
-                    }
-                });
-            }
-        }
-        if (changed) {
-            this.config.libraries = validLibraries;
-            this.#saveLyricsDataConfig(this.config);
-            this.logger.mark('歌词库配置自检完成，部分无效条目已清理。');
-        }
-        
-        if (!this._validated) { // 确保只设置一个定时器
-            setInterval(() => this.#validateConfig(), 24 * 60 * 60 * 1000); // 每日自检
-            this._validated = true;
-        }
-    }
 }

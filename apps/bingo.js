@@ -178,13 +178,6 @@ class DailyData {
   getToday() {
     return new Date().toISOString().split('T')[0]
   }
-
-  destroy() {
-    if (this.resetTimer) {
-      clearInterval(this.resetTimer)
-      this.resetTimer = null
-    }
-  }
 }
 
 // 初始化数据管理实例
