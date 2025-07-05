@@ -951,7 +951,6 @@ export class WerewolfPlugin extends plugin {
        return e.reply("现在不是你开枪的时间。");
     }
 
-    const game = gameInfo.instance
     const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0')
     if (!targetTempId) return e.reply("指令格式错误，请发送 #开枪 编号")
 
@@ -1332,23 +1331,23 @@ export class WerewolfPlugin extends plugin {
   }
 
   async processHunterShootEnd(groupId, game) {
-    if (!game || game.gameState.status !== 'hunter_shooting') return
-    game.gameState.deadline = null // 清除计时器，与 redis.zRem 保持一致
-    await redis.zRem(DEADLINE_KEY, String(groupId)); // 从ZSET中移除
+  if (!game || game.gameState.status !== 'hunter_shooting') return
+  
+  game.gameState.deadline = null // 清除计时器
+  await redis.zRem(DEADLINE_KEY, String(groupId)); 
 
-    const hunterInfo = game.getPlayerInfo(game.gameState.hunterNeedsToShoot)
-    await this.sendSystemGroupMsg(groupId, `猎人 ${hunterInfo} 选择不开枪（或超时）。`)
+  const hunterInfo = game.getPlayerInfo(game.gameState.hunterNeedsToShoot)
+  await this.sendSystemGroupMsg(groupId, `猎人 ${hunterInfo} 选择不开枪（或超时）。`)
 
-    const gameStatus = game.checkGameStatus() 
-    if (gameStatus.isEnd) {
-        await this.endGameFlow(groupId, game, gameStatus.winner);
-    } else {
-        // --- 修正：猎人超时不开枪，如果游戏未结束，应该回到白天继续发言/投票 ---
-        game.gameState.status = 'day_speak'; // 通常是回到白天发言阶段
-        await this.saveGameAll(groupId, game)
-        await this.transitionToNextPhase(groupId, game)
-    }
+  const gameStatus = game.checkGameStatus()
+  if (gameStatus.isEnd) {
+      await this.endGameFlow(groupId, game, gameStatus.winner);
+  } else {
+      game.gameState.status = 'day_speak';
+      await this.saveGameAll(groupId, game)
+      await this.transitionToNextPhase(groupId, game)
   }
+}
 
   async transitionToNextPhase(groupId, game) {
     if (!game || game.gameState.status === 'ended') return
