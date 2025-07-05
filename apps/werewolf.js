@@ -6,7 +6,7 @@ const USER_GROUP_KEY_PREFIX = 'werewolf:user_to_group:'
 const DEADLINE_KEY = 'werewolf:deadlines'
 const GAME_DATA_EXPIRATION = 6 * 60 * 60 // 6小时后自动过期
 
-class GameDataManager {
+export class GameDataManager {
   static getRedisKey(groupId) {
     return `${GAME_KEY_PREFIX}${groupId}`
   }
@@ -143,7 +143,7 @@ class GameCleaner {
 }
 
 // --- 游戏核心逻辑  ---
-class WerewolfGame {
+export class WerewolfGame {
   constructor(initialData = {}) {
     this.players = initialData.players || []
     this.roles = initialData.roles || { WEREWOLF: '狼人', VILLAGER: '村民', SEER: '预言家', WITCH: '女巫', HUNTER: '猎人', GUARD: '守卫' }
@@ -160,64 +160,90 @@ class WerewolfGame {
       speakingOrder: [],
       currentSpeakerOrderIndex: -1,
       votes: {},
+      eventLog: [], // 确保 eventLog 初始化
       deadline: null
     }
     this.potions = initialData.potions || { save: true, kill: true }
     this.userGroupMap = initialData.userGroupMap || {}
   }
 
-  initGame(hostUserId, hostNickname, groupId) {
+  async initGame(hostUserId, hostNickname, groupId) {
     this.gameState = {
       isRunning: false, currentPhase: null, currentDay: 0, status: 'waiting',
       hostUserId: hostUserId, nightActions: {}, lastProtectedId: null, hunterNeedsToShoot: null,
       currentSpeakerUserId: null, speakingOrder: [], currentSpeakerOrderIndex: -1, votes: {},
       eventLog: [],
       deadline: null
-    }
-    this.players = []
-    this.potions = { save: true, kill: true }
-    this.userGroupMap = {}
-    this.addPlayer(hostUserId, hostNickname, groupId)
-    return { success: true, message: `狼人杀游戏已创建！你是房主。\n发送 #加入狼人杀 参与游戏。` }
-  }
+    };
+    this.players = [];
+    this.potions = { save: true, kill: true };
+    this.userGroupMap = {};
+    
+    await this.addPlayer(hostUserId, hostNickname, groupId); 
 
+    return { success: true, message: `狼人杀游戏已创建！你是房主。\n发送 #加入狼人杀 参与游戏。` };
+  }
   async addPlayer(userId, nickname, groupId) {
-    if (this.players.some(p => p.userId === userId)) return { success: false, message: '你已经加入游戏了。' }
-    if (!['waiting', 'starting'].includes(this.gameState.status)) return { success: false, message: '游戏已经开始或结束，无法加入。' }
+    if (this.players.some(p => p.userId === userId)) {
+      return { success: false, message: '你已经加入游戏了。' };
+    }
+    if (!['waiting', 'starting'].includes(this.gameState.status)) {
+      return { success: false, message: '游戏已经开始或结束，无法加入。' };
+    }
     const player = {
       userId, nickname, role: null, isAlive: true, isProtected: false,
       tempId: GameDataManager.generateTempId(this.players), isDying: false
-    }
-    this.players.push(player)
-    this.userGroupMap[userId] = groupId
-    await redis.set(`${USER_GROUP_KEY_PREFIX}${userId}`, groupId, { EX: GAME_DATA_EXPIRATION })
-    return { success: true, message: `${nickname} (${player.tempId}号) 加入了游戏。当前人数: ${this.players.length}` }
+    };
+    this.players.push(player);
+    this.userGroupMap[userId] = groupId;
+    await redis.set(`${USER_GROUP_KEY_PREFIX}${userId}`, groupId, { EX: GAME_DATA_EXPIRATION });
+    return { success: true, message: `${nickname} (${player.tempId}号) 加入了游戏。当前人数: ${this.players.length}` };
   }
 
   async removePlayer(userId) {
-    const playerIndex = this.players.findIndex(p => p.userId === userId)
-    if (playerIndex === -1) return { success: false, message: '你不在游戏中。' }
-    if (!['waiting', 'starting'].includes(this.gameState.status)) return { success: false, message: '游戏已经开始，无法退出。' }
-    const removedPlayer = this.players.splice(playerIndex, 1)[0]
-    if (removedPlayer.userId === this.gameState.hostUserId) {
-      this.gameState.status = 'ended'
-      return { success: true, message: `房主 ${removedPlayer.nickname} 退出了游戏，游戏已解散。`, gameDissolved: true }
+    const playerIndex = this.players.findIndex(p => p.userId === userId);
+    if (playerIndex === -1) {
+        return { success: false, message: '你不在游戏中。' };
     }
-    delete this.userGroupMap[userId]
-    await redis.del(`${USER_GROUP_KEY_PREFIX}${removedPlayer.userId}`)
-    return { success: true, message: `${removedPlayer.nickname} 退出了游戏。当前人数: ${this.players.length}` }
+    if (!['waiting', 'starting'].includes(this.gameState.status)) {
+         return { success: false, message: '游戏已经开始，无法退出。请联系房主结束游戏。' };
+    }
+    const removedPlayer = this.players.splice(playerIndex, 1)[0];
+    if (removedPlayer.userId === this.gameState.hostUserId) {
+        this.gameState.status = 'ended';
+         return { success: true, message: `房主 ${removedPlayer.nickname} 退出了游戏，游戏已解散。`, gameDissolved: true };
+    }
+    delete this.userGroupMap[userId];
+    await redis.del(`${USER_GROUP_KEY_PREFIX}${removedPlayer.userId}`);
+    return { success: true, message: `${removedPlayer.nickname} 退出了游戏。当前人数: ${this.players.length}` };
   }
 
   assignRoles() {
-    const playerCount = this.players.length
+    const playerCount = this.players.length;
     if (playerCount < 6) return { success: false, message: '玩家数量不足，至少需要6名玩家。' }
-    let werewolfCount = playerCount >= 12 ? 4 : (playerCount >= 9 ? 3 : 2)
-    let distribution = { WEREWOLF: werewolfCount, SEER: 1, WITCH: 1, HUNTER: 1, GUARD: 1 }
-    distribution.VILLAGER = playerCount - Object.values(distribution).reduce((a, b) => a + b, 0)
-    let allRoles = []
+
+    let werewolfCount;
+    if (playerCount >= 12) werewolfCount = 4;
+    else if (playerCount >= 9) werewolfCount = 3;
+    else werewolfCount = 2;
+
+    let distribution = { WEREWOLF: werewolfCount, SEER: 1, WITCH: 1, HUNTER: 1, GUARD: 1 };
+    distribution.VILLAGER = playerCount - Object.values(distribution).reduce((a, b) => a + b, 0);
+
+    if (distribution.VILLAGER < 0) {
+        distribution.VILLAGER = 0;
+        console.warn(`[${PLUGIN_NAME}] 玩家人数 (${playerCount}) 过少，导致村民数量为负，已调整为0。`);
+    }
+
+    let allRoles = [];
     for (const role in distribution) {
       for (let i = 0; i < distribution[role]; i++) allRoles.push(role)
     }
+
+    if (allRoles.length !== playerCount) {
+        return { success: false, message: `角色分配错误：总角色数 ${allRoles.length} 不等于玩家数 ${playerCount}。` };
+    }
+
     allRoles.sort(() => Math.random() - 0.5)
     this.players.forEach((player, index) => { player.role = allRoles[index] })
     return { success: true }
@@ -239,6 +265,8 @@ class WerewolfGame {
 
   recordNightAction(role, userId, action) {
     if (this.gameState.status !== 'night') return { success: false, message: '当前不是夜晚行动时间。' }
+    const currentDay = this.gameState.currentDay;
+    const logEvent = (event) => this.gameState.eventLog.push({ day: currentDay, phase: 'night', ...event });
     const player = this.players.find(p => p.userId === userId && p.isAlive)
     if (!player || player.role !== role) return { success: false, message: '无效操作：你的身份或状态不符。' }
     if (!this.gameState.nightActions[role]) this.gameState.nightActions[role] = {}
@@ -253,6 +281,12 @@ class WerewolfGame {
     if (role === 'SEER') {
       const targetRole = validation.targetPlayer.role
       feedbackMsg += `\n[查验结果] ${validation.targetPlayer.nickname}(${validation.targetPlayer.tempId}号) 的身份是 【${targetRole === 'WEREWOLF' ? '狼人' : '好人'}】。`
+      logEvent({
+          type: 'SEER_CHECK',
+          actor: this.getPlayerInfo(userId),
+          target: this.getPlayerInfo(action.targetUserId),
+          result: targetRole === 'WEREWOLF' ? 'WEREWOLF' : 'GOOD_PERSON'
+      });
     }
     return { success: true, message: feedbackMsg }
   }
@@ -286,7 +320,7 @@ class WerewolfGame {
     // 1. 初始化状态
     this.players.forEach(p => {
       p.isProtected = false;
-      p.isDying = false; // 确保每晚开始时重置
+      p.isDying = false;
     });
 
     let guardTargetId = null;
@@ -295,21 +329,19 @@ class WerewolfGame {
     let deathCauses = {};
 
     // 2. 处理守卫行动并记录
-    const guardActions = this.gameState.nightActions.GUARD || {}; // 获取所有守卫行动，即使只有一个
-    const guardPlayerUserId = Object.keys(guardActions)[0]; // 假设只有一个守卫
-    const guardAction = guardActions[guardPlayerUserId]; // 获取具体行动
+    const guardAction = Object.values(this.gameState.nightActions.GUARD || {})[0];
     if (guardAction) {
       const target = this.players.find(p => p.tempId === guardAction.targetTempId && p.isAlive);
       if (target && target.userId !== this.gameState.lastProtectedId) {
         target.isProtected = true;
         guardTargetId = target.userId;
         this.gameState.lastProtectedId = guardTargetId;
-        logEvent({ type: 'GUARD_PROTECT', actor: this.getPlayerInfo(guardPlayerUserId), target: this.getPlayerInfo(target.userId) });
+        logEvent({ type: 'GUARD_PROTECT', actor: this.getPlayerInfo(Object.keys(this.gameState.nightActions.GUARD)[0]), target: this.getPlayerInfo(target.userId) });
       } else {
-        this.gameState.lastProtectedId = null; // 如果连续守护同一个人，则本次守护无效，下一晚可守任何人
+        this.gameState.lastProtectedId = null;
       }
     } else {
-      this.gameState.lastProtectedId = null; // 如果守卫本晚未行动，则下一晚可以守护任何人
+      this.gameState.lastProtectedId = null;
     }
 
     // 3. 处理狼人行动，标记濒死并记录
@@ -325,24 +357,19 @@ class WerewolfGame {
     }
 
     // 4. 处理女巫行动并记录
-    const witchActions = this.gameState.nightActions.WITCH || {}; // 获取所有女巫行动
-    const witchPlayerUserId = Object.keys(witchActions)[0]; // 假设只有一个女巫
-    const witchAction = witchActions[witchPlayerUserId]; // 获取具体行动
+    const witchAction = Object.values(this.gameState.nightActions.WITCH || {})[0];
     if (witchAction) {
-      const witchInfo = this.getPlayerInfo(witchPlayerUserId);
-      // 女巫用解药
+      const witchInfo = this.getPlayerInfo(Object.keys(this.gameState.nightActions.WITCH)[0]);
       if (witchAction.type === 'save' && this.potions.save) {
         this.potions.save = false;
         const savedTarget = this.players.find(p => p.tempId === witchAction.targetTempId && p.isAlive);
-        if (savedTarget && savedTarget.isDying) { // 只有当目标确实处于濒死状态时，救助才有效
-          savedTarget.isDying = false;
+        if (savedTarget && savedTarget.isDying) {
+          savedTarget.isDying = false; // 女巫先救活
           witchSavedPlayerId = savedTarget.userId;
-          delete deathCauses[savedTarget.userId]; // 救了就移除死因
+          delete deathCauses[savedTarget.userId];
           logEvent({ type: 'WITCH_SAVE', actor: witchInfo, target: this.getPlayerInfo(savedTarget.userId) });
         }
-      }
-      // 女巫用毒药
-      else if (witchAction.type === 'kill' && this.potions.kill) {
+      } else if (witchAction.type === 'kill' && this.potions.kill) {
         this.potions.kill = false;
         const poisonedTarget = this.players.find(p => p.tempId === witchAction.targetTempId && p.isAlive);
         if (poisonedTarget) {
@@ -353,95 +380,69 @@ class WerewolfGame {
       }
     }
 
-    // 5. 最终结算死亡
+    // 5. 处理“同守同救”的特殊死亡规则
+    if (killedByWerewolfId && killedByWerewolfId === guardTargetId && killedByWerewolfId === witchSavedPlayerId) {
+        const unluckyPlayer = this.players.find(p => p.userId === killedByWerewolfId);
+        if (unluckyPlayer) {
+            // 无论之前是否被救活，强制标记为死亡
+            unluckyPlayer.isDying = true; 
+            deathCauses[unluckyPlayer.userId] = 'GUARD_WITCH_CONFLICT'; // 可以定义一个特殊死因用于记录
+        }
+    }
+
+    // 6. 最终结算所有死亡
     let actualDeaths = [];
     this.players.forEach(p => {
       if (p.isDying) {
         let savedByGuard = false;
-        // 守卫的守护只对狼人攻击有效 (防止被狼杀)
+        // 守卫的守护只对狼人攻击有效，对女巫毒药和同守同救的冲突无效
         if (p.isProtected && deathCauses[p.userId] === 'WEREWOLF') {
             savedByGuard = true;
         }
 
-        if (!savedByGuard) { // 如果没有被守卫救活
+        if (!savedByGuard) {
           p.isAlive = false;
           actualDeaths.push(p);
         }
-        // 如果被守卫救活，p.isAlive 保持 true，但 p.isDying 仍需重置
       }
-      // 无论是否死亡，是否被救，一律重置 isDying 状态，为下一晚做准备
-      p.isDying = false; 
+      p.isDying = false; // 无论如何，最后都要重置 isDying 状态
     });
 
-    // 处理同守同救的边缘情况 (狼刀了A，守卫守了A，女巫也救了A，通常A还是会死)
-    // 简化处理：如果狼杀目标、守卫目标和女巫救的目标是同一个人，且最终没有实际死亡，则视为平安夜。
-    // 如果最终死亡了，则按死亡处理。这段逻辑已在实际死亡结算中处理，无需额外再操作 isAlive
-    if (killedByWerewolfId && killedByWerewolfId === guardTargetId && killedByWerewolfId === witchSavedPlayerId) {
-      const unluckyPlayer = this.players.find(p => p.userId === killedByWerewolfId);
-      if (unluckyPlayer && !actualDeaths.some(dead => dead.userId === unluckyPlayer.userId)) {
-        // 如果此玩家被狼刀，且被守卫救，也被女巫救，且最终没有出现在死亡名单里，那么他就是平安夜的中心
-        // 实际游戏中此情况该玩家仍应死亡，但按现有逻辑，如果isDying=false，他就不会被加入actualDeaths
-        // 现有逻辑已处理大部分情况，这里可以保持不变
-      }
-    }
-
-
-    // 6. 生成夜晚总结报告
+    // ... (后续的报告生成和阶段转换逻辑不变) ...
     let finalSummary = ["夜晚结束，现在公布昨晚发生的事情："];
     if (actualDeaths.length > 0) {
       actualDeaths.forEach(p => {
         finalSummary.push(`${p.nickname} (${p.tempId}号) 昨晚死亡了。`);
       });
     } else {
-      // 平安夜的定义：狼人出刀了，但被守卫或女巫救了
       if (killedByWerewolfId && (witchSavedPlayerId === killedByWerewolfId || guardTargetId === killedByWerewolfId)) {
         finalSummary.push("昨晚是个平安夜。");
       } else {
-        finalSummary.push("昨晚无人死亡。"); // 狼人没出刀，或者刀了空刀，或者狼刀目标被毒了
+        finalSummary.push("昨晚无人死亡。");
       }
     }
 
-    // 7. 清理并决定下一阶段
-    this.gameState.nightActions = {}; // 清空本轮夜晚行动记录
+    this.gameState.nightActions = {};
     const gameStatus = this.checkGameStatus();
-    
-    // --- 修正：判断猎人死亡原因，被毒死的猎人不能开枪 ---
     const deadHunter = actualDeaths.find(p => p.role === 'HUNTER');
+
     if (deadHunter) {
-        // 只有当死亡原因是狼人攻击时，猎人才能开枪
-        // 如果 deathCauses 中记录的是 WITCH，则不能开枪
-        if (deathCauses[deadHunter.userId] === 'WITCH') {
-            console.log(`[${PLUGIN_NAME}] 猎人 ${deadHunter.nickname} 被女巫毒死，无法开枪。`);
-            // 猎人被女巫毒死，不能开枪，直接走后续流程，不返回 needsHunterShoot: true
-        } else {
-            // 猎人可以开枪 (被狼刀等情况)
-            this.gameState.status = 'hunter_shooting'; // 进入猎人开枪阶段
-            this.gameState.hunterNeedsToShoot = deadHunter.userId;
-            this.gameState.currentPhase = 'NIGHT'; // 标记猎人是在夜晚死亡的
-            return {
-                success: true,
-                summary: finalSummary.join('\n'),
-                gameEnded: false, // 游戏尚未立即结束
-                needsHunterShoot: true // 返回特殊标记，告知插件进入开枪阶段
-            };
-        }
+      if (deathCauses[deadHunter.userId] === 'WITCH') {
+        console.log(`[${PLUGIN_NAME}] 猎人 ${deadHunter.nickname} 被女巫毒死，无法开枪。`);
+      } else {
+        this.gameState.status = 'hunter_shooting';
+        this.gameState.hunterNeedsToShoot = deadHunter.userId;
+        this.gameState.currentPhase = 'NIGHT';
+        return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsHunterShoot: true };
+      }
     }
 
-    // 如果游戏因其他原因结束 (比如狼人杀光了人)
     if (gameStatus.isEnd) {
       this.endGame(gameStatus.winner);
-      return {
-        success: true,
-        summary: finalSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`,
-        gameEnded: true,
-        winner: gameStatus.winner,
-        finalRoles: this.getFinalRoles()
-      };
-    } 
-    // 如果游戏正常继续，进入白天发言阶段
-    else {
+      return { success: true, summary: finalSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles(), needsHunterShoot: false };
+    } else {
       this.gameState.status = 'day_speak';
-      return { success: true, summary: finalSummary.join('\n'), gameEnded: false };
+      return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsHunterShoot: false };
     }
   }
 
@@ -450,15 +451,17 @@ class WerewolfGame {
     const voter = this.players.find(p => p.userId === voterUserId && p.isAlive)
     if (!voter) return { success: false, message: '你无法投票。' }
     if (this.gameState.votes[voterUserId]) return { success: false, message: '你已经投过票了。' }
-    // 允许弃票（0），允许投自己
     if (targetTempId === '00' || targetTempId === '0') {
       this.gameState.votes[voter.userId] = '弃票'
       return { success: true, message: `${voter.nickname} (${voter.tempId}号) 选择了弃票。` }
     }
     const targetPlayer = this.players.find(p => p.tempId === targetTempId && p.isAlive)
     if (!targetPlayer) return { success: false, message: '投票目标无效或已死亡。' }
+    if (voter.userId === targetPlayer.userId) {
+        return { success: false, message: '你不能投票给自己。' };
+    }
     this.gameState.votes[voter.userId] = targetTempId
-    return { success: true, message: `${voter.nickname} (${voter.tempId}号) 投票给了 ${targetPlayer.nickname} (${targetTempId}号)。` }
+    return { success: true, message: `${voter.nickname} (${voter.tempId}号) 投票给了 ${targetPlayer.nickname} (${targetPlayer.tempId}号)。` }
   }
 
   moveToNextSpeaker() {
@@ -485,12 +488,11 @@ class WerewolfGame {
       if (targetTempId) {
         voteCounts[targetTempId] = (voteCounts[targetTempId] || 0) + 1
         if (!voteDetails[targetTempId]) voteDetails[targetTempId] = []
-        voteDetails[targetTempId].push(`${voter.nickname}(${voter.tempId})`)
+        voteDetails[targetTempId].push(`${voter.nickname}(${voter.tempId}号)`)
       } else {
-        // 超时未投票也算弃票
         voteCounts['弃票'] = (voteCounts['弃票'] || 0) + 1
         if (!voteDetails['弃票']) voteDetails['弃票'] = []
-        voteDetails['弃票'].push(`${voter.nickname}(${voter.tempId})`)
+        voteDetails['弃票'].push(`${voter.nickname}(${voter.tempId}号)`)
       }
     })
 
@@ -514,7 +516,7 @@ class WerewolfGame {
       }
     }
 
-    this.gameState.votes = {} // 清空本轮投票记录
+    this.gameState.votes = {}
     if (tiedPlayers.length === 1) {
       const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0])
       if (eliminatedPlayer) {
@@ -527,12 +529,13 @@ class WerewolfGame {
         if (eliminatedPlayer.role === 'HUNTER') {
           this.gameState.status = 'hunter_shooting'
           this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId
-          this.gameState.currentPhase = 'DAY' // 标记是白天死亡
+          this.gameState.currentPhase = 'DAY'
           return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true }
         }
       }
     } else if (tiedPlayers.length > 1) {
-      voteSummary.push(`出现平票 (${tiedPlayers.join(', ')}号)，本轮无人出局。`)
+      const sortedTiedPlayers = [...tiedPlayers].sort();
+      voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
     } else {
       voteSummary.push("所有人都弃票或投票无效，本轮无人出局。")
     }
@@ -542,7 +545,7 @@ class WerewolfGame {
       this.endGame(gameStatus.winner)
       return { success: true, summary: voteSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
     } else {
-      this.gameState.status = 'night' // 正常进入夜晚
+      this.gameState.status = 'night'
       return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
     }
   }
@@ -728,11 +731,11 @@ export class WerewolfPlugin extends plugin {
     if (game && game.gameState.status !== 'ended') return e.reply(`本群已有游戏（状态: ${game.gameState.status}）。\n请先 #结束狼人杀。`)
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname)
-    const initResult = game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId)
-    await this.saveGameAll(groupId, game) // 使用全量保存
+    const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId)
+    
+    await this.saveGameAll(groupId, game)
     return e.reply(initResult.message, true)
   }
-
   async joinGame(e) {
     const groupId = e.group_id
     if (!groupId) return e.reply("请在群聊中使用此命令。", true)
