@@ -6,7 +6,7 @@ const USER_GROUP_KEY_PREFIX = 'werewolf:user_to_group:'
 const DEADLINE_KEY = 'werewolf:deadlines'
 const GAME_DATA_EXPIRATION = 6 * 60 * 60 // 6小时后自动过期
 
-export class GameDataManager {
+class GameDataManager {
   static getRedisKey(groupId) {
     return `${GAME_KEY_PREFIX}${groupId}`
   }
@@ -143,7 +143,7 @@ class GameCleaner {
 }
 
 // --- 游戏核心逻辑  ---
-export class WerewolfGame {
+class WerewolfGame {
   constructor(initialData = {}) {
     this.players = initialData.players || []
     this.roles = initialData.roles || { WEREWOLF: '狼人', VILLAGER: '村民', SEER: '预言家', WITCH: '女巫', HUNTER: '猎人', GUARD: '守卫' }
@@ -1347,7 +1347,7 @@ export class WerewolfPlugin extends plugin {
       await this.saveGameAll(groupId, game)
       await this.transitionToNextPhase(groupId, game)
   }
-}
+ }
 
   async transitionToNextPhase(groupId, game) {
     if (!game || game.gameState.status === 'ended') return
@@ -1427,7 +1427,7 @@ async endGameFlow(groupId, game, winner) {
     console.error(`[${PLUGIN_NAME}] 查找用户游戏时出错:`, error);
   }
   return null;
-}
+  }
 
   async sendSystemGroupMsg(groupId, msg) {
     if (!groupId || !msg) return
