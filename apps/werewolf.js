@@ -943,9 +943,13 @@ export class WerewolfPlugin extends plugin {
 
   async handleHunterShoot(e) {
     const userId = e.user_id
-    const gameInfo = await this.findUserActiveGame(userId, 'HUNTER') // 明确指定查找猎人角色
-    // findUserActiveGame 已经会检查状态、角色、isAlive (为猎人开枪做了特殊处理)
-    if (!gameInfo) return e.reply("现在不是你开枪的时间或你不是猎人。")
+    const gameInfo = await this.findUserActiveGame(e.user_id, true); // 传入 true
+    if (!gameInfo) return e.reply('未找到你参与的游戏或你不是猎人。'); // 调整提示信息
+    const game = gameInfo.instance;
+    // 增加一个严格的猎人身份和状态检查
+    if(game.gameState.status !== 'hunter_shooting' || game.gameState.hunterNeedsToShoot !== e.user_id) {
+       return e.reply("现在不是你开枪的时间。");
+    }
 
     const game = gameInfo.instance
     const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0')
@@ -1401,32 +1405,30 @@ async endGameFlow(groupId, game, winner) {
     }
   }
 
-    async findUserActiveGame(userId) {
-    try {
-      // 1. 优先从内存缓存中查找
-      let groupId = this.userToGroupCache.get(userId);
-      
-      // 2. 如果内存缓存没有，再查 Redis (作为回退)
-      if (!groupId) {
-          groupId = await redis.get(`${USER_GROUP_KEY_PREFIX}${userId}`);
-          if (groupId) {
-              // 如果 Redis 中有，则更新内存缓存
-              this.userToGroupCache.set(userId, groupId);
-          }
-      }
-
-      if (groupId) {
-        const game = await this.getGameInstance(groupId);
-        // 确保玩家确实在游戏中并且存活
-        if (game && game.players.some(p => p.userId === userId && p.isAlive)) {
-          return { groupId: groupId, instance: game };
+  async findUserActiveGame(userId, includeDead = false) {
+  try {
+    let groupId = this.userToGroupCache.get(userId);
+    
+    if (!groupId) {
+        groupId = await redis.get(`${USER_GROUP_KEY_PREFIX}${userId}`);
+        if (groupId) {
+            this.userToGroupCache.set(userId, groupId);
         }
-      }
-    } catch (error) {
-      console.error(`[${PLUGIN_NAME}] 查找用户游戏时出错:`, error);
     }
-    return null;
+
+    if (groupId) {
+      const game = await this.getGameInstance(groupId);
+      // 如果 includeDead 为 true，则不检查 isAlive
+      const playerExists = game && game.players.some(p => p.userId === userId && (includeDead || p.isAlive));
+      if (playerExists) {
+        return { groupId: groupId, instance: game };
+      }
+    }
+  } catch (error) {
+    console.error(`[${PLUGIN_NAME}] 查找用户游戏时出错:`, error);
   }
+  return null;
+}
 
   async sendSystemGroupMsg(groupId, msg) {
     if (!groupId || !msg) return
