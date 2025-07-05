@@ -23,14 +23,13 @@ export class xtowerUpdate extends plugin {
                     reg: /^(#|\/)?(xtower|弦塔)(强制)?更新$/i,
                     fnc: 'updatePlugin',
                 }
-            ],
-            // 将 task 定义移到这里
-            task: {
-                cron: '0 30 0 * * ?', // 每日0点30分执行
-                name: 'Xtower-Plugin自动更新',
-                fnc: this.autoUpdate.bind(this)
-            }
+            ]
         });
+        this.task = {
+            cron: '0 30 0 * * ?', // 每日0点30分执行
+            name: 'Xtower-Plugin自动更新',
+            fnc: this.autoUpdate.bind(this)
+        };
     }
 
     async autoUpdate() {
