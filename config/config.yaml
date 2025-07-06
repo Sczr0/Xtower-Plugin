@@ -13,3 +13,23 @@ russianRoulette:
   cylinder_capacity: 8
   initial_foresights: 1
   initial_skips: 1
+werewolf:
+  enableSheriff: true
+  exileTieHandling: 'no_exile'
+  gameEndConditions: 'wolf_kill'
+  enableLastWords: true
+  lastWordDuration: 60
+  lastWordMaxLength: 100
+  enablePostGameReview: true
+  postGameReviewEvents:
+    - 'wolf_kill'
+    - 'witch_potion'
+    - 'seer_check'
+    - 'hunter_shoot'
+    - 'exiled'
+  enableSelfExplosion: true
+  nightActionDuration: 30
+  sheriffSpeakDuration: 60
+  sheriffVoteDuration: 30
+  daySpeakDuration: 60
+  dayVoteDuration: 30
