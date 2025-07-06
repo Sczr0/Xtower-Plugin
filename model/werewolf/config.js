@@ -18,6 +18,7 @@ import { WolfKing } from './roles/WolfKing.js';
 import { WhiteWolfKing } from './roles/WhiteWolfKing.js';
 import { Idiot } from './roles/Idiot.js';
 import { Villager } from './roles/Villager.js';
+import { Guard } from './roles/Guard.js'; // 导入守卫角色
 
 import { ROLES } from './constants.js';
 
@@ -31,7 +32,7 @@ export const ROLES_MAP = {
     [ROLES.SEER]: Seer,
     [ROLES.WITCH]: Witch,
     [ROLES.HUNTER]: Hunter,
-    // [ROLES.GUARD]: Guard, // 假设存在Guard角色
+    [ROLES.GUARD]: Guard, // 假设存在Guard角色
     [ROLES.WOLF_KING]: WolfKing,
     [ROLES.WHITE_WOLF_KING]: WhiteWolfKing,
     [ROLES.IDIOT]: Idiot,
@@ -56,6 +57,46 @@ const DEFAULT_WEREWOLF_CONFIG = {
     sheriffVoteDuration: 30, // 上警投票计时器 (秒)，默认30秒
     daySpeakDuration: 60, // 白天发言计时器 (秒)，默认60秒
     dayVoteDuration: 30, // 白天投票计时器 (秒)，默认30秒
+
+    // 预设板子配置
+    rolePresets: {
+        '预女猎守': {
+            name: '预女猎守 (9人)',
+            playerCount: 9,
+            roles: {
+                [ROLES.WEREWOLF]: 3,
+                [ROLES.SEER]: 1,
+                [ROLES.WITCH]: 1,
+                [ROLES.HUNTER]: 1,
+                [ROLES.GUARD]: 1,
+                [ROLES.VILLAGER]: 2
+            }
+        },
+        '预女猎白': {
+            name: '预女猎白 (12人)',
+            playerCount: 12,
+            roles: {
+                [ROLES.WEREWOLF]: 4,
+                [ROLES.SEER]: 1,
+                [ROLES.WITCH]: 1,
+                [ROLES.HUNTER]: 1,
+                [ROLES.WHITE_WOLF_KING]: 1,
+                [ROLES.IDIOT]: 1,
+                [ROLES.VILLAGER]: 3
+            }
+        },
+        '6人新手局': {
+            name: '6人新手局',
+            playerCount: 6,
+            roles: {
+                [ROLES.WEREWOLF]: 2,
+                [ROLES.SEER]: 1,
+                [ROLES.WITCH]: 1,
+                [ROLES.VILLAGER]: 2
+            }
+        }
+    },
+    DEFAULT_BOARD_NAME: 'auto_generated_board', // 默认的自动生成板子名称
 };
 
 let werewolfConfig = { ...DEFAULT_WEREWOLF_CONFIG };
@@ -66,7 +107,14 @@ function loadWerewolfConfig() {
         const parsedConfig = YAML.parse(fileContents);
         if (parsedConfig.werewolf) {
             // 合并默认配置和文件中读取的配置
-            werewolfConfig = { ...DEFAULT_WEREWOLF_CONFIG, ...parsedConfig.werewolf };
+            werewolfConfig = { 
+                ...DEFAULT_WEREWOLF_CONFIG, 
+                ...parsedConfig.werewolf,
+                rolePresets: { // 深度合并 rolePresets
+                    ...DEFAULT_WEREWOLF_CONFIG.rolePresets,
+                    ...(parsedConfig.werewolf.rolePresets || {})
+                }
+            };
         }
     } catch (e) {
         console.error('加载狼人杀配置文件失败，使用默认配置:', e);
