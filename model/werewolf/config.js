@@ -12,7 +12,7 @@ import { Witch } from './roles/Witch.js';
 import { WolfKing } from './roles/WolfKing.js';
 import { WhiteWolfKing } from './roles/WhiteWolfKing.js';
 import { Idiot } from './roles/Idiot.js';
-import { Villager } from './roles/Villager.js'; // 假设存在Villager角色
+import { Villager } from './roles/Villager.js';
 
 import { ROLES } from './constants.js';
 
