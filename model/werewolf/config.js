@@ -2,6 +2,11 @@
 import YAML from 'yaml';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+// 获取当前模块的 __filename 和 __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // 导入所有角色类
 import { BaseRole } from './roles/BaseRole.js';
@@ -17,7 +22,7 @@ import { Villager } from './roles/Villager.js';
 import { ROLES } from './constants.js';
 
 // 假设 config.yaml 在项目根目录下的 config 文件夹内
-const CONFIG_PATH = path.join(process.cwd(), 'config', 'config.yaml');
+const CONFIG_PATH = path.resolve(__dirname, '..', '..', 'config', 'config.yaml');
 
 // 角色映射表
 export const ROLES_MAP = {
