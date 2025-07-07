@@ -912,6 +912,14 @@ class WerewolfGame {
     if (this.gameState.status !== 'day_vote') return { success: false, message: '当前不是投票时间。' }
     const voter = this.players.find(p => p.userId === voterUserId && p.isAlive)
     if (!voter) return { success: false, message: '你无法投票。' }
+  
+    // 添加调试日志
+    console.log(`[${PLUGIN_NAME}] [DEBUG] Vote attempt by ${voter.nickname}(${voter.tempId}), tags:`, voter.tags);
+  
+    if (voter.tags.includes(TAGS.REVEALED_IDIOT)) {
+      console.log(`[${PLUGIN_NAME}] [DEBUG] Vote blocked: ${voter.nickname} is revealed idiot`);
+      return { success: false, message: '白痴翻牌后无法投票。' };
+    }
     if (voter.tags.includes(TAGS.REVEALED_IDIOT)) return { success: false, message: '白痴翻牌后无法投票。' }; // 白痴翻牌后失去投票权
     if (this.gameState.votes[voterUserId]) return { success: false, message: '你已经投过票了。' }
     if (targetTempId === '00' || targetTempId === '0') { // 弃票
@@ -989,49 +997,56 @@ class WerewolfGame {
 
     this.gameState.votes = {} // 清空投票记录
     if (tiedPlayers.length === 1) { // 有唯一被投出玩家
-      const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0])
-      if (eliminatedPlayer) {
-        const voters = voteDetails[eliminatedPlayer.tempId] || [];
-        logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: voters });
-        
-        if (eliminatedPlayer.role === ROLES.IDIOT) { // 白痴被投出
-            eliminatedPlayer.tags.push(TAGS.REVEALED_IDIOT);
-            voteSummary.push(`${eliminatedPlayer.nickname}(${eliminatedPlayer.tempId}号) 被投票出局，但他/她亮出了【白痴】的身份！他/她不会死亡，但将失去后续的投票权。`);
-        } else { // 其他角色被投出
-            eliminatedPlayer.isAlive = false
-            voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`)
+    const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0])
+    if (eliminatedPlayer) {
+      const voters = voteDetails[eliminatedPlayer.tempId] || [];
+      logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: voters });
+      
+      if (eliminatedPlayer.role === ROLES.IDIOT) { // 白痴被投出
+          eliminatedPlayer.tags.push(TAGS.REVEALED_IDIOT);
+          voteSummary.push(`${eliminatedPlayer.nickname}(${eliminatedPlayer.tempId}号) 被投票出局，但他/她亮出了【白痴】的身份！他/她不会死亡，但将失去后续的投票权。`);
+          // 不在这里保存数据，而是在返回结果中标记需要保存
+          return { 
+            success: true, 
+            summary: voteSummary.join('\n'), 
+            gameEnded: false, 
+            idiotRevealed: true, // 新增标记
+            revealedIdiotId: eliminatedPlayer.userId 
+          };
+      } else { // 其他角色被投出
+          eliminatedPlayer.isAlive = false
+          voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`)
 
-            if (eliminatedPlayer.role === ROLES.HUNTER) { // 猎人被投出
-              this.gameState.status = 'hunter_shooting'
-              this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId
-              this.gameState.currentPhase = 'DAY' // 标记为白天阶段的开枪
-              return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true }
-            }
-            if (eliminatedPlayer.role === ROLES.WOLF_KING) { // 狼王被投出
-                this.gameState.status = 'wolf_king_clawing';
-                this.gameState.wolfKingNeedsToClaw = eliminatedPlayer.userId;
-                this.gameState.currentPhase = 'DAY'; // 标记为白天阶段的狼王技能
-                return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true };
-            }
-        }
+          if (eliminatedPlayer.role === ROLES.HUNTER) { // 猎人被投出
+            this.gameState.status = 'hunter_shooting'
+            this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId
+            this.gameState.currentPhase = 'DAY' // 标记为白天阶段的开枪
+            return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true }
+          }
+          if (eliminatedPlayer.role === ROLES.WOLF_KING) { // 狼王被投出
+              this.gameState.status = 'wolf_king_clawing';
+              this.gameState.wolfKingNeedsToClaw = eliminatedPlayer.userId;
+              this.gameState.currentPhase = 'DAY'; // 标记为白天阶段的狼王技能
+              return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true };
+          }
       }
-    } else if (tiedPlayers.length > 1) { // 平票
-      const sortedTiedPlayers = [...tiedPlayers].sort();
-      voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
-    } else { // 无人被投票或全部弃票
-      voteSummary.push("所有人都弃票或投票无效，本轮无人出局。")
     }
-
-    const gameStatus = this.checkGameStatus()
-    if (gameStatus.isEnd) {
-      this.endGame(gameStatus.winner)
-      return { success: true, summary: voteSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
-    } else {
-      this.gameState.status = 'night' // 进入夜晚
-      return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
-    }
+  } else if (tiedPlayers.length > 1) { // 平票
+    const sortedTiedPlayers = [...tiedPlayers].sort();
+    voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
+  } else { // 无人被投票或全部弃票
+    voteSummary.push("所有人都弃票或投票无效，本轮无人出局。")
   }
 
+  const gameStatus = this.checkGameStatus()
+  if (gameStatus.isEnd) {
+    this.endGame(gameStatus.winner)
+    return { success: true, summary: voteSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
+  } else {
+    this.gameState.status = 'night' // 进入夜晚
+    return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
+    }
+  }
   /**
    * 获取狼人袭击的最终目标ID。
    * @returns {string|null} 被袭击玩家的用户ID，如果没有则返回null。
@@ -2329,32 +2344,39 @@ export class WerewolfPlugin extends plugin {
     }
   }
 
-  /**
-   * 处理投票阶段结束，进行计票和结算。
-   * @param {string} groupId - 群组ID。
-   * @param {WerewolfGame} game - 游戏实例。
-   * @returns {Promise<void>}
-   */
-  async processVoteEnd(groupId, game) {
-    game = await this.getGameInstance(groupId); // 确认我们操作的是最新的游戏实例
-    if (!game || game.gameState.status !== 'day_vote') return
-    game.gameState.deadline = null
-    await this.sendSystemGroupMsg(groupId, "投票时间结束，正在计票...")
+/**
+ * 处理投票阶段结束，进行计票和结算。
+ * @param {string} groupId - 群组ID。
+ * @param {WerewolfGame} game - 游戏实例。
+ * @returns {Promise<void>}
+ */
+async processVoteEnd(groupId, game) {
+  game = await this.getGameInstance(groupId); // 确认我们操作的是最新的游戏实例
+  if (!game || game.gameState.status !== 'day_vote') return
+  game.gameState.deadline = null
+  await this.sendSystemGroupMsg(groupId, "投票时间结束，正在计票...")
 
-    const result = game.processVotes() // 结算投票
-    await this.saveGameAll(groupId, game) // 保存最新游戏状态
-    await this.sendSystemGroupMsg(groupId, result.summary) // 公布投票摘要
-
-    if (result.gameEnded) {
-      await this.endGameFlow(groupId, game, result.winner) // 游戏结束流程
-    } else if (result.needsHunterShoot) {
-      await this.startHunterShootPhase(groupId, game) // 进入猎人开枪阶段
-    } else if (result.needsWolfKingClaw) {
-      await this.startWolfKingClawPhase(groupId, game); // 进入狼王技能阶段
-    } else {
-      await this.transitionToNextPhase(groupId, game) // 转换到下一个阶段（夜晚）
-    }
+  const result = game.processVotes() // 结算投票
+  
+  // 如果白痴翻牌，需要额外保存玩家数据
+  if (result.idiotRevealed) {
+    await this.saveGameField(groupId, game, 'players'); // 保存玩家状态（包括白痴标签）
+    console.log(`[${PLUGIN_NAME}] [DEBUG] Idiot revealed, saved player data for group ${groupId}`);
   }
+  
+  await this.saveGameAll(groupId, game) // 保存最新游戏状态
+  await this.sendSystemGroupMsg(groupId, result.summary) // 公布投票摘要
+
+  if (result.gameEnded) {
+    await this.endGameFlow(groupId, game, result.winner) // 游戏结束流程
+  } else if (result.needsHunterShoot) {
+    await this.startHunterShootPhase(groupId, game) // 进入猎人开枪阶段
+  } else if (result.needsWolfKingClaw) {
+    await this.startWolfKingClawPhase(groupId, game); // 进入狼王技能阶段
+  } else {
+    await this.transitionToNextPhase(groupId, game) // 转换到下一个阶段（夜晚）
+  }
+ }
 
   /**
    * 开始猎人开枪阶段。
