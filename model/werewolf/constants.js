@@ -54,6 +54,7 @@ export const TAGS = {
   DYING_FROM_WOLF: 'DYING_FROM_WOLF', // 被狼刀
   SAVED_BY_WITCH: 'SAVED_BY_WITCH',   // 被女巫解药救
   POISONED_BY_WITCH: 'POISONED_BY_WITCH', // 被女巫毒药毒
+  WOLF_KING_SELF_STAB: 'WOLF_KING_SELF_STAB', // 狼王自刀
   
   // 持久状态标签
   REVEALED_IDIOT: 'REVEALED_IDIOT',   // 已翻牌的白痴

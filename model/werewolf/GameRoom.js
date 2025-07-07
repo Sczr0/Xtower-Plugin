@@ -173,7 +173,6 @@ export class GameRoom {
     
     // 3. 删除房间主数据
     await redis.del(key);
-
     logger(`房间 ${this.groupId} 的资源清理完毕。`);
   }
 
@@ -225,8 +224,8 @@ export class GameRoom {
         this.engine = new GameEngine(this.players); // GameEngine 内部会使用 werewolfConfig
 
         // 2. 分配角色 (这个逻辑应该在 GameEngine 内部完成)
-        // GameEngine 的 startGame 方法会处理角色分配并返回事件
-        const gameStartResult = this.engine.startGame(boardName);
+        // GameEngine 的 initializeGame 方法会处理角色分配并返回事件
+        const gameStartResult = this.engine.initializeGame(boardName);
         if (gameStartResult.error) {
             this.engine = null; // 分配失败，回滚
             return { error: gameStartResult.error };
@@ -235,7 +234,7 @@ export class GameRoom {
         this.status = GAME_STATUS.RUNNING;
         
         // 3. 准备私聊身份信息和进入第一夜的事件
-        const events = gameStartResult.events; // GameEngine.startGame 返回的事件
+        const events = gameStartResult.events; // GameEngine.initializeGame 返回的事件
 
         const saveSuccess = await this._saveWithOptimisticLock();
         if (saveSuccess) {

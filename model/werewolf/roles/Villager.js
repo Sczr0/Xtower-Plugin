@@ -1,9 +1,14 @@
 // model/werewolf/roles/Villager.js
 import { BaseRole } from './BaseRole.js';
-import { ROLES } from '../constants.js';
+import { ROLES, TEAMS } from '../constants.js';
 
 export class Villager extends BaseRole {
-  constructor(player) {
-    super(player, ROLES.VILLAGER, '好人', '平民', '无特殊技能');
+  constructor() {
+    super({
+      roleId: ROLES.VILLAGER,
+      name: '平民',
+      team: TEAMS.GOOD,
+      description: '无特殊技能',
+    });
   }
 }

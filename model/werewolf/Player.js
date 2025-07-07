@@ -8,16 +8,22 @@ import { Villager } from './roles/Villager.js';
 import { Seer } from './roles/Seer.js';
 import { Witch } from './roles/Witch.js';
 import { Hunter } from './roles/Hunter.js';
-// ... import other roles
+import { Guard } from './roles/Guard.js';
+import { Idiot } from './roles/Idiot.js';
+import { WolfKing } from './roles/WolfKing.js';
+import { WhiteWolfKing } from './roles/WhiteWolfKing.js';
 
 // 映射表，方便通过 roleId 创建实例
 const roleClassMap = {
-  WEREWOLF: Werewolf,
-  VILLAGER: Villager,
-  SEER: Seer,
-  WITCH: Witch,
-  HUNTER: Hunter,
-  // ... map other roles
+  [TAGS.WEREWOLF]: Werewolf,
+  [TAGS.VILLAGER]: Villager,
+  [TAGS.SEER]: Seer,
+  [TAGS.WITCH]: Witch,
+  [TAGS.HUNTER]: Hunter,
+  [TAGS.GUARD]: Guard,
+  [TAGS.IDIOT]: Idiot,
+  [TAGS.WOLF_KING]: WolfKing,
+  [TAGS.WHITE_WOLF_KING]: WhiteWolfKing,
 };
 
 
@@ -66,15 +72,29 @@ export class Player {
     this.tags = this.tags.filter(tag => tag.name !== tagName);
   }
 
-  clearTemporaryTags() {
-    // 定义哪些标签是临时的
-    const temporaryTags = [
+  /**
+   * 清除玩家的临时标签。
+   * 如果指定了 tagName，则只清除该特定名称的临时标签。
+   * @param {string} [tagName] - 可选，要清除的特定临时标签名称。
+   */
+  clearTemporaryTags(tagName) {
+    const temporaryTagsList = [
       TAGS.GUARDED,
       TAGS.DYING_FROM_WOLF,
       TAGS.SAVED_BY_WITCH,
       TAGS.POISONED_BY_WITCH,
+      TAGS.WOLF_KING_SELF_STAB, // 新增：狼王自刀标签也是临时标签
     ];
-    this.tags = this.tags.filter(tag => !temporaryTags.includes(tag.name));
+
+    if (tagName) {
+      // 如果指定了 tagName，并且它在临时标签列表中，则只清除该标签
+      if (temporaryTagsList.includes(tagName)) {
+        this.tags = this.tags.filter(tag => tag.name !== tagName);
+      }
+    } else {
+      // 否则，清除所有临时标签
+      this.tags = this.tags.filter(tag => !temporaryTagsList.includes(tag.name));
+    }
   }
 
   /**
