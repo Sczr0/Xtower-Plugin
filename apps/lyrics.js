@@ -69,8 +69,8 @@ export class LyricsPlugin extends plugin {
             event: 'message',
             priority: 0,
             rule: [
-                { reg: '^#抽歌词\\s*(-riv)?$', fnc: 'drawLyrics' },
-                { reg: '^#抽歌词\\s+(\\d+)\\s*(-riv)?$', fnc: 'batchDraw' },
+                { reg: '^#?抽歌词\\s*(-riv)?$', fnc: 'drawLyrics' },
+                { reg: '^#?抽歌词\\s+(\\d+)\\s*(-riv)?$', fnc: 'batchDraw' },
                 { reg: '^#获取歌词\\s+(.+?)\\s+(.+)$', fnc: 'fetchFromRepo' },
                 { reg: '^#新建歌词仓库\\s+(.+)\\s+(.+)$', fnc: 'addRepo' },
                 { reg: '^#删除歌词仓库\\s+(.+)$', fnc: 'removeRepo' },
