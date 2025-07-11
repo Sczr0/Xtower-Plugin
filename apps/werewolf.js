@@ -885,7 +885,7 @@ class WerewolfGame {
       this.endGame();
       return { 
           success: true, 
-          summary: finalSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, 
+          summary: finalSummary.join('\n'), // FIX: Only return night summary, not the whole game over message
           gameEnded: true, 
           winner: gameStatus.winner, 
           finalRoles: this.getFinalRoles(),
@@ -1041,7 +1041,7 @@ class WerewolfGame {
   const gameStatus = this.checkGameStatus()
   if (gameStatus.isEnd) {
     this.endGame(gameStatus.winner)
-    return { success: true, summary: voteSummary.join('\n') + `\n游戏结束！${gameStatus.winner} 阵营获胜！`, gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
+    return { success: true, summary: voteSummary.join('\n'), gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
   } else {
     this.gameState.status = 'night' // 进入夜晚
     return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
@@ -1958,6 +1958,7 @@ export class WerewolfPlugin extends plugin {
 
     // 2. 遍历每一天生成战报
     for (const day in eventsByDay) {
+        if (day === '0') continue; // 通常第0天没有事件，跳过
         summary += `\n【第 ${day} 天】\n`;
         const { night: nightEvents, day: dayPhaseEvents } = eventsByDay[day];
 
@@ -1971,23 +1972,13 @@ export class WerewolfPlugin extends plugin {
             if (seerAction) summary += `    - 预言家 ${seerAction.actor} 查验了 ${seerAction.target}，结果为【${seerAction.result === ROLES.WEREWOLF ? '狼人' : '好人'}】。\n`;
 
             const wolfAction = nightEvents.find(e => e.type === 'WEREWOLF_ATTACK');
-            if (wolfAction) summary += `    - 狼人团队袭击了 ${wolfAction.target}。\n`;
-            
             const witchSave = nightEvents.find(e => e.type === 'WITCH_SAVE');
-            if (witchSave) summary += `    - 女巫 ${witchSave.actor} 使用了解药，救活了 ${witchSave.target}。\n`;
-
             const witchKill = nightEvents.find(e => e.type === 'WITCH_KILL');
+            
+            if (wolfAction) summary += `    - 狼人团队袭击了 ${wolfAction.target}。\n`;
+            if (witchSave) summary += `    - 女巫 ${witchSave.actor} 使用了解药，救活了 ${witchSave.target}。\n`;
             if (witchKill) summary += `    - 女巫 ${witchKill.actor} 使用了毒药，毒杀了 ${witchKill.target}。\n`;
             
-            const nightDeaths = nightEvents.filter(e => e.type === 'NIGHT_DEATH');
-            const hasNightlyActivity = nightEvents.some(e => ['WEREWOLF_ATTACK', 'WITCH_KILL'].includes(e.type));
-
-            if (hasDeaths) {
-            // 如果有实际死亡，不需要额外显示，死亡信息已经在主摘要中了
-            } else if (hasNightlyActivity) {
-                summary += `    - 这是一个平安夜。\n`;
-            }
-
             const nightHunterShoot = nightEvents.find(e => e.type === 'HUNTER_SHOOT');
             if (nightHunterShoot) summary += `    - 死亡的猎人 ${nightHunterShoot.actor} 在夜晚开枪带走了 ${nightHunterShoot.target}。\n`;
             
@@ -2019,7 +2010,7 @@ export class WerewolfPlugin extends plugin {
             if (dayWolfKingClaw) summary += `    - 被放逐的狼王 ${dayWolfKingClaw.actor} 发动技能带走了 ${dayWolfKingClaw.target}。\n`;
         }
     }
-    return summary;
+    return summary.trim();
   }
 
   /**
@@ -2123,7 +2114,7 @@ export class WerewolfPlugin extends plugin {
     await this.sendSystemGroupMsg(groupId, `天黑请闭眼... 夜晚行动阶段开始，总时长 ${totalNightDuration / 1000} 秒。\n（其中狼人及其他角色行动时间 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒，女巫单独行动时间 ${this.WITCH_ACTION_DURATION / 1000} 秒）\n【夜晚行动阶段】有身份的玩家请根据私聊提示进行操作。`)
 
     if (AUTO_MUTE_ENABLED && game.gameState.hasPermission) { // 使用AUTO_MUTE_ENABLED常量
-        await this.sendSystemGroupMsg(groupId, "正在禁言所有玩家...");
+        await this.sendSystemGroupMsg(groupId, "正在禁言所有存活玩家...");
         await this.muteAllPlayers(groupId, game, true, 3600); // 禁言所有存活玩家
     }
 
@@ -2304,8 +2295,8 @@ export class WerewolfPlugin extends plugin {
     const alivePlayerList = game.getAlivePlayerList()
     
     if (game.gameState.hasPermission) {
-        await this.sendSystemGroupMsg(groupId, "进入投票阶段，解除所有玩家禁言。");
-        await this.unmuteAllPlayers(groupId, game); // 解禁所有玩家
+        await this.sendSystemGroupMsg(groupId, "进入投票阶段，解除所有存活玩家禁言。");
+        await this.unmuteAllPlayers(groupId, game, true); // FIX: 只解禁存活玩家
     }
 
     await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号] 或 #投票 弃票\n你有 ${this.VOTE_DURATION / 1000} 秒时间。\n存活玩家：\n${alivePlayerList}`)
@@ -2518,7 +2509,7 @@ async processVoteEnd(groupId, game) {
     await this.sendSystemGroupMsg(groupId, finalMessage); // 发送组合消息
     
     if (game.gameState.hasPermission) {
-        await this.unmuteAllPlayers(groupId, game); // 解禁所有玩家
+        await this.unmuteAllPlayers(groupId, game, false); // 解禁所有玩家
     }
 
     await this.deleteGame(groupId); // 删除游戏数据
@@ -2668,11 +2659,18 @@ async processVoteEnd(groupId, game) {
    * 解禁群组内所有玩家。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
+   * @param {boolean} [onlyAlive=false] - 是否只解禁存活的玩家。
    * @returns {Promise<void>}
    */
-  async unmuteAllPlayers(groupId, game) {
-    // 解禁所有参与过游戏的玩家，以防有中途死亡的玩家仍被禁言
-    for (const player of game.players) {
+  async unmuteAllPlayers(groupId, game, onlyAlive = false) {
+    // 根据 onlyAlive 标志决定要解禁的玩家列表
+    const playersToUnmute = onlyAlive ? game.players.filter(p => p.isAlive) : game.players;
+    
+    // 如果是解禁所有参与者，也包括已死亡的，以确保游戏结束后所有人都解除禁言
+    const logMessage = onlyAlive ? '存活玩家' : '所有玩家';
+    console.log(`[${PLUGIN_NAME}] [解禁] 正在解禁 ${logMessage} (群: ${groupId})`);
+
+    for (const player of playersToUnmute) {
       await this.mutePlayer(groupId, player.userId, 0); // duration为0表示解禁
       await new Promise(resolve => setTimeout(resolve, 200));
     }
