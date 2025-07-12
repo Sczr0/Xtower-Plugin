@@ -2,7 +2,7 @@ import lodash from 'lodash';
 
 // 模拟次数，建议值在 100,000 到 1,000,000 之间。
 // 次数越高，结果越接近理论期望值，但计算时间越长。10万次在现代CPU上通常很快。
-const SIMULATION_COUNT = 200000;
+const SIMULATION_COUNT = 100000;
 
 export class gachaCalc extends plugin {
   constructor() {
