@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 export class gachaCalc extends plugin {
   constructor() {
@@ -19,8 +20,6 @@ export class gachaCalc extends plugin {
         },
       ],
     });
-
-    // ** FIX: Removed path calculation from here, because 'this.path' is not yet available. **
   }
 
   async showHelp(e) { /* ... 帮助信息不变 ... */ }
@@ -45,14 +44,15 @@ export class gachaCalc extends plugin {
     return true;
   }
 
-  /**
-   * 调用外部Python脚本执行计算
-   * @param {object} args - 包含所有计算参数的对象
-   * @returns {Promise<number>} 返回一个包含期望抽数的Promise
-   */
   runPythonCalculator(args) {
-    // ** FIX: Construct the path here, where 'this.path' is guaranteed to exist. **
-    const pyScriptPath = path.join(this.path, 'py/gacha_calculator.py');
+    // ** THE ABSOLUTE FINAL FIX: Derive path using Node.js standard module metadata **
+    // This approach is 100% reliable and does not depend on Yunzai's `this.path`.
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    // Our script is in plugins/your-plugin/py/, and this file is in plugins/your-plugin/apps/
+    // So we need to go up one directory from 'apps' to the plugin root
+    const pluginRoot = path.join(__dirname, '..');
+    const pyScriptPath = path.join(pluginRoot, 'apps', 'test.py');
 
     return new Promise((resolve, reject) => {
       const argsJson = JSON.stringify(args);
@@ -80,7 +80,11 @@ export class gachaCalc extends plugin {
     });
   }
 
+  // ... (parseArgs 和 generateReport 函数保持不变)
 }
+
+// --- 为了代码完整性，附上不变的函数 ---
+// (这部分与上一版完全相同，仅为方便复制)
 gachaCalc.prototype.parseArgs = function(rawParams) {
     const tokens = rawParams.split(/\s+/).filter(Boolean);
     const args = {
