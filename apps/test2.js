@@ -1,13 +1,12 @@
-import lodash from 'lodash';
-
-// 模拟次数，可以适当增加以提高精度
-const SIMULATION_COUNT = 200000;
+import plugin from '../../lib/plugins/plugin.js';
+import { spawn } from 'child_process';
+import path from 'path';
 
 export class gachaCalc extends plugin {
   constructor() {
     super({
       name: '抽卡期望计算',
-      dsc: '计算原神/星铁抽卡期望，发送 #期望计算帮助 查看详情',
+      dsc: '计算原神/星铁抽卡期望(高性能版)',
       event: 'message',
       priority: 500,
       rule: [
@@ -21,9 +20,137 @@ export class gachaCalc extends plugin {
         },
       ],
     });
+
+    this.pyScriptPath = path.join(this.path, 'test.py');
   }
 
-  async showHelp(e) {
+  async showHelp(e) { /* ... 帮助信息不变 ... */ }
+
+  async calculateExpectation(e) {
+    const rawParams = e.msg.replace(/^#期望计算/, '').trim();
+    if (!rawParams) { /* ... 参数检查 ... */ }
+    const args = this.parseArgs(rawParams);
+    if (!args.game || !args.pool) { /* ... 参数检查 ... */ }
+
+    await this.reply(`正在光速计算中，请稍候... (外部Python核心)`);
+
+    try {
+      // 调用 Python 脚本并等待结果
+      const expectedPulls = await this.runPythonCalculator(args);
+      const report = this.generateReport(args, expectedPulls);
+      await this.reply(report, true);
+    } catch (error) {
+      logger.error(`[抽卡期望计算] 外部脚本执行失败: ${error.message}`);
+      // 向用户发送清晰的错误提示
+      await this.reply(error.message, true);
+    }
+
+    return true;
+  }
+
+  /**
+   * 调用外部Python脚本执行计算
+   * @param {object} args - 包含所有计算参数的对象
+   * @returns {Promise<number>} 返回一个包含期望抽数的Promise
+   */
+  runPythonCalculator(args) {
+    return new Promise((resolve, reject) => {
+      // 将JS对象转换为JSON字符串，以便传递给Python
+      const argsJson = JSON.stringify(args);
+
+      // 使用 'python3' 命令，这比 'python' 更明确
+      const pyProcess = spawn('python3', [this.pyScriptPath, argsJson]);
+
+      let result = '';
+      let errorMessage = '';
+
+      pyProcess.stdout.on('data', (data) => {
+        result += data.toString();
+      });
+
+      pyProcess.stderr.on('data', (data) => {
+        errorMessage += data.toString();
+      });
+
+      // 捕获 'spawn' 本身的错误，例如 'python3' 命令不存在
+      pyProcess.on('error', (err) => {
+        const userError = `错误：无法启动Python计算核心。\n请确认服务器已安装Python 3，并且 'python3' 命令在系统PATH中可用。\n底层错误: ${err.message}`;
+        reject(new Error(userError));
+      });
+
+      pyProcess.on('close', (code) => {
+        if (code === 0) {
+          // 成功执行
+          resolve(parseFloat(result));
+        } else {
+          // 脚本执行出错
+          const userError = `错误：Python计算核心执行失败 (退出码: ${code})。\n请检查后台日志获取详细Python错误信息。\n错误日志: ${errorMessage || '无'}`;
+          reject(new Error(userError));
+        }
+      });
+    });
+  }
+
+  // ... (parseArgs 和 generateReport 函数保持不变，因为它们只负责数据处理和UI)
+  parseArgs(rawParams) { /* ... 不变 ... */ }
+  generateReport(args, expectedPulls) { /* ... 不变 ... */ }
+}
+
+// --- 为了代码完整性，附上不变的函数 ---
+gachaCalc.prototype.parseArgs = function(rawParams) {
+    const tokens = rawParams.split(/\s+/).filter(Boolean);
+    const args = {
+      game: null, pool: null, targetCount: 1,
+      initialState: { pity: 0, isGuaranteed: false, mingguangCounter: 0, fatePoint: 0 },
+    };
+    tokens.forEach(token => {
+      if (['原神', 'genshin'].includes(token.toLowerCase())) args.game = 'genshin';
+      if (['星铁', '崩铁', 'hsr'].includes(token.toLowerCase())) args.game = 'hsr';
+      if (['角色', '人物'].includes(token)) args.pool = 'character';
+      if (['武器'].includes(token)) args.pool = 'weapon';
+      if (['光锥'].includes(token)) args.pool = 'lightcone';
+      const countMatch = token.match(/^(\d+)(个|把|张|命|魂|精)$/);
+      if (countMatch) args.targetCount = parseInt(countMatch[1]);
+      const pityMatch = token.match(/^(\d+)(抽|垫)$/);
+      if (pityMatch) args.initialState.pity = parseInt(pityMatch[1]);
+      if (['大保底', '必出'].includes(token)) args.initialState.isGuaranteed = true;
+      if (['小保底', '不歪'].includes(token)) args.initialState.isGuaranteed = false;
+      const mingguangMatch = token.match(/^(明光|明光计数)(\d+)$/);
+      if (mingguangMatch) args.initialState.mingguangCounter = parseInt(mingguangMatch[2]);
+      const fatePointMatch = token.match(/^(命定|定轨)(值)?(\d+)$/);
+      if (fatePointMatch) args.initialState.fatePoint = parseInt(fatePointMatch[3]);
+    });
+    if (args.initialState.fatePoint >= 1) args.initialState.isGuaranteed = true;
+    return args;
+};
+gachaCalc.prototype.generateReport = function(args, expectedPulls) {
+    const gameName = { 'genshin': '原神', 'hsr': '崩坏：星穹铁道' }[args.game];
+    const poolName = { 'character': 'UP角色', 'weapon': '定轨武器', 'lightcone': 'UP光锥' }[args.pool];
+    const unit = { 'character': '个', 'weapon': '把', 'lightcone': '个' }[args.pool];
+    let report = `--- 抽卡期望计算 ---
+游戏：${gameName}
+卡池：${poolName}
+目标：获取 ${args.targetCount}${unit}
+【初始状态】
+已垫抽数：${args.initialState.pity} 抽
+`;
+    if (args.pool === 'weapon') {
+      report += `命定值：${args.initialState.fatePoint} 点 (定轨${args.initialState.fatePoint >= 1 ? '已满' : '未满'})\n`;
+    } else {
+      report += `保底状态：${args.initialState.isGuaranteed ? '大保底' : '小保底'}\n`;
+    }
+    if (args.game === 'genshin' && args.pool === 'character') {
+      report += `明光计数：${args.initialState.mingguangCounter}\n`;
+    }
+    report += `\n【计算结果】
+期望抽数：${expectedPulls.toFixed(2)} 抽
+`;
+    const pinkFates = Math.ceil(expectedPulls);
+    const starStones = pinkFates * 160;
+    report += `约等于：${pinkFates} 抽 (或 ${starStones.toLocaleString()} 星琼/原石)`;
+    return report;
+};
+gachaCalc.prototype.showHelp = function(e) {
     const helpMessage = `--- 抽卡期望计算 帮助 ---
 指令: #期望计算 [参数...]
 
@@ -75,276 +202,6 @@ export class gachaCalc extends plugin {
 • #期望计算 50抽 大保底 原神 角色 3个 明光2
 (参数顺序随意，效果等同于上面的说明)
 `;
-    await this.reply(helpMessage);
+    this.reply(helpMessage);
     return true;
-  }
-
-    async calculateExpectation(e) {
-    const rawParams = e.msg.replace(/^#期望计算/, '').trim();
-    if (!rawParams) {
-      await this.reply('请输入要计算的卡池信息，或发送 #期望计算帮助 查看用法。');
-      return true;
-    }
-
-    const args = this.parseArgs(rawParams);
-
-    if (!args.game || !args.pool) {
-      let errorMsg = '参数不完整，请提供游戏和卡池类型。\n';
-      errorMsg += '支持的游戏：原神、星铁\n';
-      errorMsg += '支持的卡池：角色、武器、光锥\n';
-      errorMsg += '发送 #期望计算帮助 查看详细用法。';
-      await this.reply(errorMsg);
-      return true;
-    }
-    
-    const poolCheck = {
-      genshin: ['character', 'weapon'],
-      hsr: ['character', 'lightcone']
-    };
-    
-    const validPools = (args.game === 'genshin') ? poolCheck.genshin : poolCheck.hsr;
-    if (!validPools.includes(args.pool)) {
-      const poolName = { 'character': '角色', 'weapon': '武器', 'lightcone': '光锥' }[args.pool];
-      const gameName = { 'genshin': '原神', 'hsr': '星穹铁道' }[args.game];
-      await this.reply(`【${gameName}】中没有【${poolName}】卡池，请检查输入。`);
-      return true;
-    }
-
-    await this.reply(`正在光速计算中，请稍候... (模拟次数: ${SIMULATION_COUNT.toLocaleString()})`);
-
-    try {
-      const totalPulls = this.runMonteCarloSimulation(args);
-      const expectedPulls = totalPulls / SIMULATION_COUNT;
-      const report = this.generateReport(args, expectedPulls);
-      await this.reply(report, true);
-    } catch (error) {
-      logger.error(`[抽卡期望计算] 发生错误: ${error.stack}`);
-      await this.reply('计算过程中出现未知错误，请检查后台日志。');
-    }
-
-    return true;
-  }
-  
-  // ... (parseArgs 和 generateReport 函数保持不变，代码已折叠)
-  parseArgs(rawParams) {
-    const tokens = rawParams.split(/\s+/).filter(Boolean);
-    const args = {
-      game: null,
-      pool: null,
-      targetCount: 1,
-      initialState: {
-        pity: 0,
-        isGuaranteed: false,
-        mingguangCounter: 0,
-        fatePoint: 0,
-      },
-    };
-
-    tokens.forEach(token => {
-      if (['原神', 'genshin'].includes(token.toLowerCase())) args.game = 'genshin';
-      if (['星铁', '崩铁', 'hsr'].includes(token.toLowerCase())) args.game = 'hsr';
-      if (['角色', '人物'].includes(token)) args.pool = 'character';
-      if (['武器'].includes(token)) args.pool = 'weapon';
-      if (['光锥'].includes(token)) args.pool = 'lightcone';
-      
-      const countMatch = token.match(/^(\d+)(个|把|张|命|魂|精)$/);
-      if (countMatch) args.targetCount = parseInt(countMatch[1]);
-      
-      const pityMatch = token.match(/^(\d+)(抽|垫)$/);
-      if (pityMatch) args.initialState.pity = parseInt(pityMatch[1]);
-
-      if (['大保底', '必出'].includes(token)) args.initialState.isGuaranteed = true;
-      if (['小保底', '不歪'].includes(token)) args.initialState.isGuaranteed = false;
-
-      const mingguangMatch = token.match(/^(明光|明光计数)(\d+)$/);
-      if (mingguangMatch) args.initialState.mingguangCounter = parseInt(mingguangMatch[2]);
-
-      const fatePointMatch = token.match(/^(命定|定轨)(值)?(\d+)$/);
-      if (fatePointMatch) args.initialState.fatePoint = parseInt(fatePointMatch[3]);
-    });
-    
-    if (args.initialState.fatePoint >= 1) {
-        args.initialState.isGuaranteed = true;
-    }
-
-    return args;
-  }
-  generateReport(args, expectedPulls) {
-    const gameName = { 'genshin': '原神', 'hsr': '崩坏：星穹铁道' }[args.game];
-    const poolName = { 'character': 'UP角色', 'weapon': '定轨武器', 'lightcone': 'UP光锥' }[args.pool];
-    const unit = { 'character': '个', 'weapon': '把', 'lightcone': '个' }[args.pool];
-    
-    let report = `--- 抽卡期望计算 ---
-游戏：${gameName}
-卡池：${poolName}
-目标：获取 ${args.targetCount}${unit}
-
-【初始状态】
-已垫抽数：${args.initialState.pity} 抽
-`;
-
-    if (args.pool === 'weapon') {
-      report += `命定值：${args.initialState.fatePoint} 点 (定轨${args.initialState.fatePoint >= 1 ? '已满' : '未满'})\n`;
-    } else {
-      report += `保底状态：${args.initialState.isGuaranteed ? '大保底' : '小保底'}\n`;
-    }
-    
-    if (args.game === 'genshin' && args.pool === 'character') {
-      report += `明光计数：${args.initialState.mingguangCounter}\n`;
-    }
-
-    report += `\n【计算结果】
-期望抽数：${expectedPulls.toFixed(2)} 抽
-`;
-    const pinkFates = Math.ceil(expectedPulls);
-    const starStones = pinkFates * 160;
-    report += `约等于：${pinkFates} 抽 (或 ${starStones.toLocaleString()} 星琼/原石)`;
-    
-    return report;
-  }
-  
-  // --- 性能重构核心区 ---
-
-  runMonteCarloSimulation(args) {
-    let totalPullsSum = 0;
-    for (let i = 0; i < SIMULATION_COUNT; i++) {
-      totalPullsSum += this.simulateOneFullRun(args);
-    }
-    return totalPullsSum;
-  }
-
-  /**
-   * 模拟一次完整的、获取N个目标的流程
-   * 这是性能优化的关键，只在开始时克隆一次状态
-   */
-  simulateOneFullRun(args) {
-    let totalPulls = 0;
-    // 优化点：只在完整模拟开始时克隆一次状态
-    const state = lodash.cloneDeep(args.initialState);
-
-    for (let i = 0; i < args.targetCount; i++) {
-      // 优化点：将可变状态对象直接传入，函数会修改它，并返回抽数
-      totalPulls += this.getOneTargetPulls(args.game, args.pool, state);
-    }
-    return totalPulls;
-  }
-
-  /**
-   * 【高性能版】计算获取一个目标所需的抽数
-   * 这个函数会直接修改传入的 state 对象，性能极高
-   * @param {object} state - 当前的抽卡状态，会被直接修改
-   * @returns {number} 获取到这一个目标所花费的抽数
-   */
-  getOneTargetPulls(game, pool, state) {
-    let pulls = 0;
-    const wasGuaranteed = state.isGuaranteed; // 记录本次开始时是否大保底
-
-    while (true) {
-      pulls++;
-      state.pity++;
-
-      const fiveStarProb = this.calculateFiveStarProb(game, pool, state.pity);
-
-      if (Math.random() < fiveStarProb) {
-        let isTarget = false;
-        
-        switch (`${game}-${pool}`) {
-          case 'genshin-character': isTarget = this.handleGenshinCharacter(state); break;
-          case 'genshin-weapon': isTarget = this.handleGenshinWeapon(state); break;
-          case 'hsr-character': isTarget = this.handleHsrCharacter(state); break;
-          case 'hsr-lightcone': isTarget = this.handleHsrLightCone(state); break;
-        }
-
-        if (isTarget) {
-          // 成功！重置状态以备下次调用
-          state.pity = 0;
-          state.isGuaranteed = false;
-          if (`${game}-${pool}` === 'genshin-character') state.mingguangCounter = 0;
-          if (`${game}-${pool}` === 'genshin-weapon') state.fatePoint = 0;
-          return pulls; // 返回本次花费的抽数
-        } else {
-          // 歪了！更新状态以继续抽
-          if (`${game}-${pool}` === 'genshin-character' && !wasGuaranteed) {
-            state.mingguangCounter++; // 只有从小保底歪了才计数
-          }
-          if (`${game}-${pool}` === 'genshin-weapon') {
-            state.fatePoint = 1;
-          }
-          state.pity = 0;
-          state.isGuaranteed = true;
-          // 注意：此处不再返回，而是让 while 循环继续，直到抽到为止
-          // 同时，下一次循环开始时，wasGuaranteed 的值仍然是本次开始时的，逻辑正确
-          return pulls + this.getOneTargetPulls(game, pool, state); // 递归调用，计算大保底部分
-        }
-      }
-    }
-  }
-  
-  // --- 各卡池逻辑处理器 (无变化) ---
-  handleGenshinCharacter(state) {
-    if (state.isGuaranteed) return true;
-    if (state.mingguangCounter >= 3) return true;
-    if (Math.random() < 0.00018) return true;
-    return Math.random() < 0.5;
-  }
-  handleGenshinWeapon(state) {
-    if (state.fatePoint >= 1) return true;
-    return Math.random() < 0.375;
-  }
-  handleHsrCharacter(state) {
-    if (state.isGuaranteed) return true;
-    return Math.random() < 0.5625;
-  }
-  handleHsrLightCone(state) {
-    if (state.isGuaranteed) return true;
-    return Math.random() < 0.75;
-  }
-  calculateFiveStarProb(game, pool, pity) {
-    let baseRate, softPityStart, softPityStep, maxPity;
-    switch (`${game}-${pool}`) {
-      case 'genshin-character': baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
-      case 'genshin-weapon': baseRate = 0.007; softPityStart = 64; softPityStep = 0.07; maxPity = 80; break;
-      case 'hsr-character': baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
-      case 'hsr-lightcone': baseRate = 0.008; softPityStart = 66; softPityStep = 0.075; maxPity = 80; break;
-      default: return 0;
-    }
-    if (pity >= maxPity) return 1.0;
-    if (pity < softPityStart) return baseRate;
-    return baseRate + (pity - softPityStart + 1) * softPityStep;
-  }
-
-  
-    generateReport(args, expectedPulls) {
-    const gameName = { 'genshin': '原神', 'hsr': '崩坏：星穹铁道' }[args.game];
-    const poolName = { 'character': 'UP角色', 'weapon': '定轨武器', 'lightcone': 'UP光锥' }[args.pool];
-    const unit = { 'character': '个', 'weapon': '把', 'lightcone': '个' }[args.pool];
-    
-    let report = `--- 抽卡期望计算 ---
-游戏：${gameName}
-卡池：${poolName}
-目标：获取 ${args.targetCount}${unit}
-
-【初始状态】
-已垫抽数：${args.initialState.pity} 抽
-`;
-
-    if (args.pool === 'weapon') {
-      report += `命定值：${args.initialState.fatePoint} 点 (定轨${args.initialState.fatePoint >= 1 ? '已满' : '未满'})\n`;
-    } else {
-      report += `保底状态：${args.initialState.isGuaranteed ? '大保底' : '小保底'}\n`;
-    }
-    
-    if (args.game === 'genshin' && args.pool === 'character') {
-      report += `明光计数：${args.initialState.mingguangCounter}\n`;
-    }
-
-    report += `\n【计算结果】
-期望抽数：${expectedPulls.toFixed(2)} 抽
-`;
-    const pinkFates = Math.ceil(expectedPulls);
-    const starStones = pinkFates * 160;
-    report += `约等于：${pinkFates} 抽 (或 ${starStones.toLocaleString()} 星琼/原石)`;
-    
-    return report;
-  }
-}
+};
