@@ -1,7 +1,7 @@
 import lodash from 'lodash';
 
 // 模拟次数，可以适当增加以提高精度
-const SIMULATION_COUNT = 100000;
+const SIMULATION_COUNT = 200000;
 
 export class gachaCalc extends plugin {
   constructor() {
@@ -102,10 +102,10 @@ export class gachaCalc extends plugin {
       hsr: ['character', 'lightcone']
     };
     
-    let validPools = (args.game === 'genshin') ? poolCheck.genshin : poolCheck.hsr;
+    const validPools = (args.game === 'genshin') ? poolCheck.genshin : poolCheck.hsr;
     if (!validPools.includes(args.pool)) {
-      let poolName = { 'character': '角色', 'weapon': '武器', 'lightcone': '光锥' }[args.pool];
-      let gameName = { 'genshin': '原神', 'hsr': '星穹铁道' }[args.game];
+      const poolName = { 'character': '角色', 'weapon': '武器', 'lightcone': '光锥' }[args.pool];
+      const gameName = { 'genshin': '原神', 'hsr': '星穹铁道' }[args.game];
       await this.reply(`【${gameName}】中没有【${poolName}】卡池，请检查输入。`);
       return true;
     }
@@ -115,7 +115,6 @@ export class gachaCalc extends plugin {
     try {
       const totalPulls = this.runMonteCarloSimulation(args);
       const expectedPulls = totalPulls / SIMULATION_COUNT;
-
       const report = this.generateReport(args, expectedPulls);
       await this.reply(report, true);
     } catch (error) {
@@ -189,60 +188,61 @@ export class gachaCalc extends plugin {
     }
     return totalPulls;
   }
-  
-  getOneTarget(startState) {
+
+  // ** FIX: Restored correct function signature **
+  getOneTarget(game, pool, startState) {
     let pulls = 0;
-    let state = lodash.cloneDeep(startState); // 深拷贝一份初始状态，用于本次模拟
-    
+    // Deep clone the starting state for this single run, so we don't modify the state of the parent loop.
+    let state = lodash.cloneDeep(startState);
+
     while (true) {
-        pulls++;
-        state.pity++;
+      pulls++;
+      state.pity++;
 
-        const fiveStarProb = this.calculateFiveStarProb(game, pool, state.pity);
+      const fiveStarProb = this.calculateFiveStarProb(game, pool, state.pity);
 
-        if (Math.random() < fiveStarProb) {
-            let isTarget = false;
-            
-            switch (`${game}-${pool}`) {
-                case 'genshin-character':
-                    isTarget = this.handleGenshinCharacter(state);
-                    break;
-                case 'genshin-weapon':
-                    isTarget = this.handleGenshinWeapon(state);
-                    break;
-                case 'hsr-character':
-                    isTarget = this.handleHsrCharacter(state);
-                    break;
-                case 'hsr-lightcone':
-                    isTarget = this.handleHsrLightCone(state);
-                    break;
-            }
-
-            if (isTarget) {
-                state.pity = 0;
-                state.isGuaranteed = false;
-                if (`${game}-${pool}` === 'genshin-character') state.mingguangCounter = 0;
-                if (`${game}-${pool}` === 'genshin-weapon') state.fatePoint = 0;
-                return { pulls, newState: state };
-            } else {
-                // 歪了！
-                if (`${game}-${pool}` === 'genshin-character' && !startState.isGuaranteed) {
-                    state.mingguangCounter++;
-                }
-                if (`${game}-${pool}` === 'genshin-weapon') {
-                    state.fatePoint = 1;
-                }
-                state.pity = 0;
-                state.isGuaranteed = true;
-                
-                // 【重要】更新startState，为下一次循环做准备
-                startState = lodash.cloneDeep(state);
-            }
+      if (Math.random() < fiveStarProb) {
+        let isTarget = false;
+        
+        switch (`${game}-${pool}`) {
+          case 'genshin-character':
+            isTarget = this.handleGenshinCharacter(state);
+            break;
+          case 'genshin-weapon':
+            isTarget = this.handleGenshinWeapon(state);
+            break;
+          case 'hsr-character':
+            isTarget = this.handleHsrCharacter(state);
+            break;
+          case 'hsr-lightcone':
+            isTarget = this.handleHsrLightCone(state);
+            break;
         }
+
+        if (isTarget) {
+          // Success! Reset state for the *next* "getOneTarget" run.
+          state.pity = 0;
+          state.isGuaranteed = false;
+          if (`${game}-${pool}` === 'genshin-character') state.mingguangCounter = 0;
+          if (`${game}-${pool}` === 'genshin-weapon') state.fatePoint = 0;
+          return { pulls, newState: state };
+        } else {
+          // Missed! Update the state for the *next pull within this while loop*.
+          if (`${game}-${pool}` === 'genshin-character' && !startState.isGuaranteed) {
+            // Check original state to see if this miss increments the counter.
+            state.mingguangCounter++;
+          }
+          if (`${game}-${pool}` === 'genshin-weapon') {
+            state.fatePoint = 1;
+          }
+          state.pity = 0;
+          state.isGuaranteed = true;
+          // ** FIX: Removed the erroneous and slow logic from here **
+        }
+      }
     }
-}
-
-
+  }
+  
   handleGenshinCharacter(state) {
     if (state.isGuaranteed) return true;
     if (state.mingguangCounter >= 3) return true;
@@ -269,14 +269,10 @@ export class gachaCalc extends plugin {
     let baseRate, softPityStart, softPityStep, maxPity;
 
     switch (`${game}-${pool}`) {
-      case 'genshin-character':
-        baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
-      case 'genshin-weapon':
-        baseRate = 0.007; softPityStart = 64; softPityStep = 0.07; maxPity = 80; break;
-      case 'hsr-character':
-        baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
-      case 'hsr-lightcone':
-        baseRate = 0.008; softPityStart = 66; softPityStep = 0.075; maxPity = 80; break;
+      case 'genshin-character': baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
+      case 'genshin-weapon': baseRate = 0.007; softPityStart = 64; softPityStep = 0.07; maxPity = 80; break;
+      case 'hsr-character': baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
+      case 'hsr-lightcone': baseRate = 0.008; softPityStart = 66; softPityStep = 0.075; maxPity = 80; break;
       default: return 0;
     }
     
