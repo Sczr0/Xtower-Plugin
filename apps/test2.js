@@ -1,4 +1,3 @@
-import plugin from '../../lib/plugins/plugin.js';
 import { spawn } from 'child_process';
 import path from 'path';
 
@@ -21,7 +20,7 @@ export class gachaCalc extends plugin {
       ],
     });
 
-    this.pyScriptPath = path.join(this.path, 'test.py');
+    // ** FIX: Removed path calculation from here, because 'this.path' is not yet available. **
   }
 
   async showHelp(e) { /* ... 帮助信息不变 ... */ }
@@ -35,13 +34,11 @@ export class gachaCalc extends plugin {
     await this.reply(`正在光速计算中，请稍候... (外部Python核心)`);
 
     try {
-      // 调用 Python 脚本并等待结果
       const expectedPulls = await this.runPythonCalculator(args);
       const report = this.generateReport(args, expectedPulls);
       await this.reply(report, true);
     } catch (error) {
       logger.error(`[抽卡期望计算] 外部脚本执行失败: ${error.message}`);
-      // 向用户发送清晰的错误提示
       await this.reply(error.message, true);
     }
 
@@ -54,25 +51,19 @@ export class gachaCalc extends plugin {
    * @returns {Promise<number>} 返回一个包含期望抽数的Promise
    */
   runPythonCalculator(args) {
-    return new Promise((resolve, reject) => {
-      // 将JS对象转换为JSON字符串，以便传递给Python
-      const argsJson = JSON.stringify(args);
+    // ** FIX: Construct the path here, where 'this.path' is guaranteed to exist. **
+    const pyScriptPath = path.join(this.path, 'py/gacha_calculator.py');
 
-      // 使用 'python3' 命令，这比 'python' 更明确
-      const pyProcess = spawn('python3', [this.pyScriptPath, argsJson]);
+    return new Promise((resolve, reject) => {
+      const argsJson = JSON.stringify(args);
+      const pyProcess = spawn('python3', [pyScriptPath, argsJson]);
 
       let result = '';
       let errorMessage = '';
 
-      pyProcess.stdout.on('data', (data) => {
-        result += data.toString();
-      });
+      pyProcess.stdout.on('data', (data) => { result += data.toString(); });
+      pyProcess.stderr.on('data', (data) => { errorMessage += data.toString(); });
 
-      pyProcess.stderr.on('data', (data) => {
-        errorMessage += data.toString();
-      });
-
-      // 捕获 'spawn' 本身的错误，例如 'python3' 命令不存在
       pyProcess.on('error', (err) => {
         const userError = `错误：无法启动Python计算核心。\n请确认服务器已安装Python 3，并且 'python3' 命令在系统PATH中可用。\n底层错误: ${err.message}`;
         reject(new Error(userError));
@@ -80,10 +71,8 @@ export class gachaCalc extends plugin {
 
       pyProcess.on('close', (code) => {
         if (code === 0) {
-          // 成功执行
           resolve(parseFloat(result));
         } else {
-          // 脚本执行出错
           const userError = `错误：Python计算核心执行失败 (退出码: ${code})。\n请检查后台日志获取详细Python错误信息。\n错误日志: ${errorMessage || '无'}`;
           reject(new Error(userError));
         }
@@ -91,12 +80,7 @@ export class gachaCalc extends plugin {
     });
   }
 
-  // ... (parseArgs 和 generateReport 函数保持不变，因为它们只负责数据处理和UI)
-  parseArgs(rawParams) { /* ... 不变 ... */ }
-  generateReport(args, expectedPulls) { /* ... 不变 ... */ }
 }
-
-// --- 为了代码完整性，附上不变的函数 ---
 gachaCalc.prototype.parseArgs = function(rawParams) {
     const tokens = rawParams.split(/\s+/).filter(Boolean);
     const args = {
