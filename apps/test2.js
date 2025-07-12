@@ -1,4 +1,3 @@
-import plugin from '../../lib/plugins/plugin.js';
 import lodash from 'lodash';
 
 // 模拟次数，可以适当增加以提高精度
