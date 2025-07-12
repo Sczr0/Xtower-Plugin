@@ -1,4 +1,3 @@
-import plugin from '../../lib/plugins/plugin.js';
 import lodash from 'lodash';
 
 // 模拟次数，建议值在 100,000 到 1,000,000 之间。
