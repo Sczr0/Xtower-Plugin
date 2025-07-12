@@ -6,7 +6,7 @@ export class gachaCalc extends plugin {
   constructor() {
     super({
       name: '抽卡期望计算',
-      dsc: '计算原神/星铁抽卡期望(高性能版)',
+      dsc: '计算原神/星铁抽卡期望',
       event: 'message',
       priority: 500,
       rule: [
@@ -30,7 +30,7 @@ export class gachaCalc extends plugin {
     const args = this.parseArgs(rawParams);
     if (!args.game || !args.pool) { /* ... 参数检查 ... */ }
 
-    await this.reply(`正在光速计算中，请稍候... (外部Python核心)`);
+    await this.reply(`正在计算中，请稍候...`);
 
     try {
       const expectedPulls = await this.runPythonCalculator(args);
@@ -80,11 +80,7 @@ export class gachaCalc extends plugin {
     });
   }
 
-  // ... (parseArgs 和 generateReport 函数保持不变)
 }
-
-// --- 为了代码完整性，附上不变的函数 ---
-// (这部分与上一版完全相同，仅为方便复制)
 gachaCalc.prototype.parseArgs = function(rawParams) {
     const tokens = rawParams.split(/\s+/).filter(Boolean);
     const args = {
