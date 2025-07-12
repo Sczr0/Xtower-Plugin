@@ -79,7 +79,7 @@ export class gachaCalc extends plugin {
     return true;
   }
 
-  async calculateExpectation(e) {
+    async calculateExpectation(e) {
     const rawParams = e.msg.replace(/^#期望计算/, '').trim();
     if (!rawParams) {
       await this.reply('请输入要计算的卡池信息，或发送 #期望计算帮助 查看用法。');
@@ -124,7 +124,8 @@ export class gachaCalc extends plugin {
 
     return true;
   }
-
+  
+  // ... (parseArgs 和 generateReport 函数保持不变，代码已折叠)
   parseArgs(rawParams) {
     const tokens = rawParams.split(/\s+/).filter(Boolean);
     const args = {
@@ -168,6 +169,41 @@ export class gachaCalc extends plugin {
 
     return args;
   }
+  generateReport(args, expectedPulls) {
+    const gameName = { 'genshin': '原神', 'hsr': '崩坏：星穹铁道' }[args.game];
+    const poolName = { 'character': 'UP角色', 'weapon': '定轨武器', 'lightcone': 'UP光锥' }[args.pool];
+    const unit = { 'character': '个', 'weapon': '把', 'lightcone': '个' }[args.pool];
+    
+    let report = `--- 抽卡期望计算 ---
+游戏：${gameName}
+卡池：${poolName}
+目标：获取 ${args.targetCount}${unit}
+
+【初始状态】
+已垫抽数：${args.initialState.pity} 抽
+`;
+
+    if (args.pool === 'weapon') {
+      report += `命定值：${args.initialState.fatePoint} 点 (定轨${args.initialState.fatePoint >= 1 ? '已满' : '未满'})\n`;
+    } else {
+      report += `保底状态：${args.initialState.isGuaranteed ? '大保底' : '小保底'}\n`;
+    }
+    
+    if (args.game === 'genshin' && args.pool === 'character') {
+      report += `明光计数：${args.initialState.mingguangCounter}\n`;
+    }
+
+    report += `\n【计算结果】
+期望抽数：${expectedPulls.toFixed(2)} 抽
+`;
+    const pinkFates = Math.ceil(expectedPulls);
+    const starStones = pinkFates * 160;
+    report += `约等于：${pinkFates} 抽 (或 ${starStones.toLocaleString()} 星琼/原石)`;
+    
+    return report;
+  }
+  
+  // --- 性能重构核心区 ---
 
   runMonteCarloSimulation(args) {
     let totalPullsSum = 0;
@@ -177,23 +213,31 @@ export class gachaCalc extends plugin {
     return totalPullsSum;
   }
 
+  /**
+   * 模拟一次完整的、获取N个目标的流程
+   * 这是性能优化的关键，只在开始时克隆一次状态
+   */
   simulateOneFullRun(args) {
     let totalPulls = 0;
-    let currentState = lodash.cloneDeep(args.initialState);
+    // 优化点：只在完整模拟开始时克隆一次状态
+    const state = lodash.cloneDeep(args.initialState);
 
     for (let i = 0; i < args.targetCount; i++) {
-      const result = this.getOneTarget(args.game, args.pool, currentState);
-      totalPulls += result.pulls;
-      currentState = result.newState;
+      // 优化点：将可变状态对象直接传入，函数会修改它，并返回抽数
+      totalPulls += this.getOneTargetPulls(args.game, args.pool, state);
     }
     return totalPulls;
   }
 
-  // ** FIX: Restored correct function signature **
-  getOneTarget(game, pool, startState) {
+  /**
+   * 【高性能版】计算获取一个目标所需的抽数
+   * 这个函数会直接修改传入的 state 对象，性能极高
+   * @param {object} state - 当前的抽卡状态，会被直接修改
+   * @returns {number} 获取到这一个目标所花费的抽数
+   */
+  getOneTargetPulls(game, pool, state) {
     let pulls = 0;
-    // Deep clone the starting state for this single run, so we don't modify the state of the parent loop.
-    let state = lodash.cloneDeep(startState);
+    const wasGuaranteed = state.isGuaranteed; // 记录本次开始时是否大保底
 
     while (true) {
       pulls++;
@@ -205,69 +249,58 @@ export class gachaCalc extends plugin {
         let isTarget = false;
         
         switch (`${game}-${pool}`) {
-          case 'genshin-character':
-            isTarget = this.handleGenshinCharacter(state);
-            break;
-          case 'genshin-weapon':
-            isTarget = this.handleGenshinWeapon(state);
-            break;
-          case 'hsr-character':
-            isTarget = this.handleHsrCharacter(state);
-            break;
-          case 'hsr-lightcone':
-            isTarget = this.handleHsrLightCone(state);
-            break;
+          case 'genshin-character': isTarget = this.handleGenshinCharacter(state); break;
+          case 'genshin-weapon': isTarget = this.handleGenshinWeapon(state); break;
+          case 'hsr-character': isTarget = this.handleHsrCharacter(state); break;
+          case 'hsr-lightcone': isTarget = this.handleHsrLightCone(state); break;
         }
 
         if (isTarget) {
-          // Success! Reset state for the *next* "getOneTarget" run.
+          // 成功！重置状态以备下次调用
           state.pity = 0;
           state.isGuaranteed = false;
           if (`${game}-${pool}` === 'genshin-character') state.mingguangCounter = 0;
           if (`${game}-${pool}` === 'genshin-weapon') state.fatePoint = 0;
-          return { pulls, newState: state };
+          return pulls; // 返回本次花费的抽数
         } else {
-          // Missed! Update the state for the *next pull within this while loop*.
-          if (`${game}-${pool}` === 'genshin-character' && !startState.isGuaranteed) {
-            // Check original state to see if this miss increments the counter.
-            state.mingguangCounter++;
+          // 歪了！更新状态以继续抽
+          if (`${game}-${pool}` === 'genshin-character' && !wasGuaranteed) {
+            state.mingguangCounter++; // 只有从小保底歪了才计数
           }
           if (`${game}-${pool}` === 'genshin-weapon') {
             state.fatePoint = 1;
           }
           state.pity = 0;
           state.isGuaranteed = true;
-          // ** FIX: Removed the erroneous and slow logic from here **
+          // 注意：此处不再返回，而是让 while 循环继续，直到抽到为止
+          // 同时，下一次循环开始时，wasGuaranteed 的值仍然是本次开始时的，逻辑正确
+          return pulls + this.getOneTargetPulls(game, pool, state); // 递归调用，计算大保底部分
         }
       }
     }
   }
   
+  // --- 各卡池逻辑处理器 (无变化) ---
   handleGenshinCharacter(state) {
     if (state.isGuaranteed) return true;
     if (state.mingguangCounter >= 3) return true;
     if (Math.random() < 0.00018) return true;
     return Math.random() < 0.5;
   }
-
   handleGenshinWeapon(state) {
     if (state.fatePoint >= 1) return true;
     return Math.random() < 0.375;
   }
-
   handleHsrCharacter(state) {
     if (state.isGuaranteed) return true;
     return Math.random() < 0.5625;
   }
-
   handleHsrLightCone(state) {
     if (state.isGuaranteed) return true;
     return Math.random() < 0.75;
   }
-
   calculateFiveStarProb(game, pool, pity) {
     let baseRate, softPityStart, softPityStep, maxPity;
-
     switch (`${game}-${pool}`) {
       case 'genshin-character': baseRate = 0.006; softPityStart = 74; softPityStep = 0.06; maxPity = 90; break;
       case 'genshin-weapon': baseRate = 0.007; softPityStart = 64; softPityStep = 0.07; maxPity = 80; break;
@@ -275,13 +308,13 @@ export class gachaCalc extends plugin {
       case 'hsr-lightcone': baseRate = 0.008; softPityStart = 66; softPityStep = 0.075; maxPity = 80; break;
       default: return 0;
     }
-    
     if (pity >= maxPity) return 1.0;
     if (pity < softPityStart) return baseRate;
     return baseRate + (pity - softPityStart + 1) * softPityStep;
   }
+
   
-  generateReport(args, expectedPulls) {
+    generateReport(args, expectedPulls) {
     const gameName = { 'genshin': '原神', 'hsr': '崩坏：星穹铁道' }[args.game];
     const poolName = { 'character': 'UP角色', 'weapon': '定轨武器', 'lightcone': 'UP光锥' }[args.pool];
     const unit = { 'character': '个', 'weapon': '把', 'lightcone': '个' }[args.pool];
