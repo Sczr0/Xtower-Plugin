@@ -84,7 +84,7 @@ export class gachaCalc extends plugin {
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
         const pluginRoot = path.join(__dirname, '..');
-        const pyScriptPath = path.join(pluginRoot, 'example', 'test.py');
+        const pyScriptPath = path.join(pluginRoot, 'apps', 'test.py');
         const pythonCommand = os.platform() === 'win32' ? 'python' : 'python3';
 
         return new Promise((resolve, reject) => {
