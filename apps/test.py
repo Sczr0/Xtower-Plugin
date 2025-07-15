@@ -1,20 +1,11 @@
-# =============================================================================
-# FINAL, FULLY-MODIFIED test.py
-# (All fixes and new features included)
-# =============================================================================
-
 import sys
 import json
-import numpy as np
+import numpy as np # type: ignore
 
-# -----------------------------------------------------------------------------
-# MonteCarloModel (Simulation Engine)
-# -----------------------------------------------------------------------------
 class MonteCarloModel:
     def __init__(self, args):
         self.args = args
-        # 角色池模拟更复杂，需要更多样本
-        self.simulation_count = 100000 if args['pool'] == 'character' else 50000
+        self.simulation_count = 50000 if args['pool'] == 'character' else 25000
     
     def run(self):
         rng = self._RNG()
@@ -84,9 +75,6 @@ class MonteCarloModel:
             if self.index >= self.CHUNK_SIZE: self.chunk=np.random.rand(self.CHUNK_SIZE); self.index=0
             num=self.chunk[self.index]; self.index+=1; return num
 
-# -----------------------------------------------------------------------------
-# MathematicalModel (Expectation Engine)
-# -----------------------------------------------------------------------------
 class MathematicalModel:
     def __init__(self, args):
         self.args = args
@@ -104,9 +92,6 @@ class MathematicalModel:
             mean = initial_pulls + (self.args['targetCount'] - 1) * subsequent_pulls
         return {"mean": mean}
 
-# -----------------------------------------------------------------------------
-# Base GachaLogic (Defines common interface)
-# -----------------------------------------------------------------------------
 class GachaLogic:
     def __init__(self):
         # 延迟加载，只有在需要时才计算矩阵
@@ -121,9 +106,6 @@ class GachaLogic:
     def _update_state_after_win(self, s, wg): s['pity'], s['isGuaranteed'] = 0, False
     def _update_state_after_lose(self, s, wg): s['pity'], s['isGuaranteed'] = 0, True
 
-# =============================================================================
-# Genshin Impact Character Logic (Most Complex)
-# =============================================================================
 class GenshinCharacterLogic(GachaLogic):
     PITY_MAX, GUARANTEE_MAX, MINGGUANG_MAX = 90, 2, 4
     TOTAL_STATES = PITY_MAX * GUARANTEE_MAX * MINGGUANG_MAX
@@ -201,7 +183,6 @@ class GenshinCharacterLogic(GachaLogic):
                     returns_this_run+=self._get_5_star_return(False,collection,rng); self._update_state_after_lose(state,was_guaranteed)
             elif state['pity4']>=10 or rng.get()<0.051/(1-p5 if p5<1 else 0.99): returns_this_run+=self._handle_4_star_pull(state,rng,collection,up4_c6)
     
-    # 【MODIFIED】Detailed 5-star return logic for Genshin
     def _get_5_star_return(self, is_up, c, rng):
         NUM_STANDARD_5_STARS = 7
         if is_up:
@@ -235,9 +216,6 @@ class GenshinCharacterLogic(GachaLogic):
         super()._update_state_after_lose(state,was_guaranteed)
         if not was_guaranteed: state['mingguangCounter'] = state.get('mingguangCounter', 0) + 1
 
-# =============================================================================
-# Honkai: Star Rail Character Logic (For Detailed Simulation)
-# =============================================================================
 class HSRCharacterLogic(GenshinCharacterLogic):
     """Inherits from Genshin logic for simulation structure, but overrides return calculations."""
     def _get_5_star_return(self, is_up, c, rng):
@@ -263,11 +241,11 @@ class HSRCharacterLogic(GenshinCharacterLogic):
                 else: return 20
             else: # It's a light cone
                 return 8
+    def _get_win_lose_prob(self, is_g, mg=0):
+    # 覆盖父类的方法，移除明光机制，使用纯粹的56.25/43.75概率
+    # mg参数保留以兼容方法签名，但在此处无实际作用
+        return (1.0, 0.0) if is_g else (0.5625, 0.4375)
 
-# =============================================================================
-# Simplified Models for Math & Basic Simulation
-# =============================================================================
-# 【FIXED】Inherits from GachaLogic, not GachaModel
 class SimpleGachaModel(GachaLogic):
     """Base class for Weapon, Light Cone, and HSR Character (Math) models."""
     def get_expectation_for_state(self, state_dict):
@@ -279,7 +257,6 @@ class SimpleGachaModel(GachaLogic):
         self._ensure_tables_calculated()
         return self.E_values[self._state_to_index(self.zero_state)]
 
-    # 【NEW】Generic simulation method for all simple models
     def get_one_target_pulls_sim(self, state, rng, collection, up4_c6):
         pulls, returns_this_run = 0, 0
         while True:
@@ -302,20 +279,19 @@ class SimpleGachaModel(GachaLogic):
             elif state['pity4'] >= 10 or rng.get() < (0.051 / (1 - p5 if p5 < 1 else 0.99)):
                 returns_this_run += self._handle_4_star_pull(state, rng, collection, up4_c6)
     
-    # Default return logic for models without detailed implementation
     def _get_5_star_return(self, is_up, c, rng): return 10
     def _handle_4_star_pull(self, s, r, c, u): s['pity4'] = 0; return 2
 
 class GenshinWeaponModel(SimpleGachaModel):
-    PITY_MAX, FATE_MAX = 80, 3 # 0, 1, 2
-    TOTAL_STATES = PITY_MAX * FATE_MAX
+    PITY_MAX, FATE_MAX, GUARANTEE_MAX = 80, 3, 2 # 新增 GUARANTEE_MAX
+    TOTAL_STATES = PITY_MAX * FATE_MAX * GUARANTEE_MAX # <--- 修正计算方式
     zero_state = (0, 0, False)
     
     def _dict_to_tuple(self, d): return (d['pity'], d.get('fatePoint', 0), d['isGuaranteed'])
     def _state_to_index(self, s): return s[0] + s[1] * self.PITY_MAX + (1 if s[2] else 0) * self.PITY_MAX * self.FATE_MAX
     def _get_prob_5_star(self, p):
         pull = p + 1; return 1. if pull >= 80 else (0.007 if pull < 64 else 0.007 + (pull - 63) * 0.07)
-    def _get_win_lose_prob(self, is_g_or_fate_full): return (1.0, 0.0) if is_g_or_fate_full else (0.75, 0.25)
+    def _get_win_lose_prob(self, is_g_or_fate_full): return (1.0, 0.0) if is_g_or_fate_full else (0.375, 0.625)
     def _build_transition_matrix(self):
         A, b = np.identity(self.TOTAL_STATES), np.ones(self.TOTAL_STATES)
         for i in range(self.TOTAL_STATES):
@@ -330,6 +306,63 @@ class GenshinWeaponModel(SimpleGachaModel):
     def _update_state_after_win(self, s, wg): s['pity'], s['fatePoint'], s['isGuaranteed'] = 0, 0, False
     def _update_state_after_lose(self, s, wg): s['pity'], s['fatePoint'], s['isGuaranteed'] = 0, min(s.get('fatePoint',0) + 1, self.FATE_MAX - 1), True
 
+class GenshinWeaponLogic(GenshinWeaponModel):
+    """
+    为原神武器池计算返还星辉
+    """
+    def get_one_target_pulls_sim(self, state, rng, collection, up4_c6):
+        pulls, returns_this_run = 0, 0
+        while True:
+            pulls += 1
+            state['pity'] += 1
+            state['pity4'] += 1
+            p5 = self._get_prob_5_star(state['pity'] - 1)
+            
+            # 抽中5星
+            if rng.get() < p5:
+                was_guaranteed = state['isGuaranteed'] or state.get('fatePoint', 0) >= 2
+                p_win, _ = self._get_win_lose_prob(was_guaranteed)
+                is_target = rng.get() < p_win
+                state['pity'], state['pity4'] = 0, 0
+                
+                returns_this_run += self._get_5_star_return(is_target, collection, rng)
+                if is_target:
+                    self._update_state_after_win(state, was_guaranteed)
+                    return pulls, returns_this_run
+                else:
+                    self._update_state_after_lose(state, was_guaranteed)
+            
+            # 抽中4星 (基于10连保底或基础概率)
+            elif state['pity4'] >= 10 or rng.get() < (0.051 / (1 - p5 if p5 < 1 else 0.99)):
+                 returns_this_run += self._handle_4_star_pull(state, rng, collection, up4_c6)
+
+    def _get_5_star_return(self, is_up, c, rng):
+        # 武器池5星只返还10星辉
+        return 10
+
+    def _handle_4_star_pull(self, s, r, c, u):
+        s['pity4'] = 0
+        
+        # 武器池的4星UP概率为75%
+        if s.get('isGuaranteed4', False) or r.get() < 0.75:
+            s['isGuaranteed4'] = False
+            # 获得UP四星武器，返还2星辉
+            return 2
+        else:
+            s['isGuaranteed4'] = True
+            # 歪了，此时可能获得常驻武器或常驻角色
+            # 此处假设角色和武器概率均等 (50/50)
+            NUM_CHARS, NUM_WEAPONS = 39, 18 # 引用原神角色池的常驻数量
+            TOTAL_OFF_BANNER = NUM_CHARS + NUM_WEAPONS
+
+            if r.get() < NUM_CHARS / TOTAL_OFF_BANNER: # 模拟抽到了角色
+                i = f"std_char_{int(r.get() * NUM_CHARS)}"
+                c[i] = c.get(i, 0) + 1
+                if c[i] == 1: return 0      # New: 0 星辉
+                elif c[i] <= 7: return 2  # 1-6命: 2 星辉
+                else: return 5              # 满命后: 5 星辉
+            else: # 模拟抽到了武器
+                return 2
 
 class HSRCharacterModel(SimpleGachaModel):
     PITY_MAX, GUARANTEE_MAX = 90, 2
@@ -352,7 +385,6 @@ class HSRCharacterModel(SimpleGachaModel):
                 if p_lose > 0: A[i, self._state_to_index((0, 1))] -= p5 * p_lose
         return A, b
     
-    # 【NEW】Detailed return logic for HSR Character simulation
     def _get_5_star_return(self, is_up, c, rng):
         NUM_STANDARD_5_STARS = 7
         if is_up:
@@ -406,39 +438,80 @@ class HSRLightConeModel(SimpleGachaModel):
                 if p_lose > 0: A[i, self._state_to_index((0, 1))] -= p5 * p_lose
         return A, b
     
-    # Simplified return logic for HSR Light Cones
     def _get_5_star_return(self, is_up, c, rng): return 40
     def _handle_4_star_pull(self, s, r, c, u): s['pity4'] = 0; return 8
 
-# -----------------------------------------------------------------------------
-# Logic Dispatcher
-# 【FIXED】All class names are now correct.
-# -----------------------------------------------------------------------------
+class HSRLightConeLogic(HSRLightConeModel):
+    """
+    为星铁光锥池提供精细化模拟，以计算返还星芒。
+    """
+    def get_one_target_pulls_sim(self, state, rng, collection, up4_c6):
+        pulls, returns_this_run = 0, 0
+        while True:
+            pulls += 1
+            state['pity'] += 1
+            state['pity4'] += 1
+            p5 = self._get_prob_5_star(state['pity'] - 1)
+            
+            if rng.get() < p5:
+                was_guaranteed = state['isGuaranteed']
+                p_win, _ = self._get_win_lose_prob(was_guaranteed)
+                is_target = rng.get() < p_win
+                state['pity'], state['pity4'] = 0, 0
+                
+                returns_this_run += self._get_5_star_return(is_target, collection, rng)
+                if is_target:
+                    self._update_state_after_win(state, was_guaranteed)
+                    return pulls, returns_this_run
+                else:
+                    self._update_state_after_lose(state, was_guaranteed)
+            
+            elif state['pity4'] >= 10 or rng.get() < (0.066 / (1 - p5 if p5 < 1 else 0.99)):
+                 returns_this_run += self._handle_4_star_pull(state, rng, collection, up4_c6)
+    
+    def _get_5_star_return(self, is_up, c, rng):
+        # 光锥池5星只返还40星芒
+        return 40
+
+    def _handle_4_star_pull(self, s, r, c, u):
+        s['pity4'] = 0
+        
+        if s.get('isGuaranteed4', False) or r.get() < 0.75:
+            s['isGuaranteed4'] = False
+            return 8 # UP四星光锥返还8星芒
+        else:
+            s['isGuaranteed4'] = True
+            # 歪了，可能获得常驻光锥或常驻角色
+            # 假设角色和光锥概率均等
+            NUM_CHARS, NUM_LCS = 22, 29 # 引用星铁角色池的常驻数量
+            TOTAL_OFF_BANNER = NUM_CHARS + NUM_LCS
+
+            if r.get() < NUM_CHARS / TOTAL_OFF_BANNER: # 模拟抽到了角色
+                i = f"std_char_{int(r.get() * NUM_CHARS)}"
+                c[i] = c.get(i, 0) + 1
+                if c[i] == 1: return 0     # New: 0 星芒
+                elif c[i] <= 7: return 8 # 1-6魂: 8 星芒
+                else: return 20            # 满魂后: 20 星芒
+            else: # 模拟抽到了光锥
+                return 8
+
 MODEL_LOGIC = {
     "genshin-character": GenshinCharacterLogic(),
-    "genshin-weapon": GenshinWeaponModel(),
-    # Note: For HSR Characters, simulation uses HSRCharacterModel's detailed methods,
-    # while math expectation uses its simpler matrix methods.
-    "hsr-character": HSRCharacterModel(),
-    "hsr-lightcone": HSRLightConeModel()
+    "genshin-weapon": GenshinWeaponLogic(),
+    "hsr-character": HSRCharacterLogic(),
+    "hsr-lightcone": HSRLightConeLogic()
 }
 
-# -----------------------------------------------------------------------------
-# Main Execution Block
-# -----------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
         args = json.loads(sys.argv[1])
         mode = args.get('mode', 'expectation')
         
-        # Select the engine based on the mode
         model = MonteCarloModel(args) if mode == 'distribution' else MathematicalModel(args)
         
-        # Run the engine and print result as JSON
         print(json.dumps(model.run()))
         
     except Exception as e:
         import traceback
-        # Print a detailed error to stderr for the JS plugin to catch
         print(f"FATAL SCRIPT ERROR: {e}\n{traceback.format_exc()}", file=sys.stderr)
         sys.exit(1)

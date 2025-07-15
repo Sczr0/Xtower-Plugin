@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import os from 'os'; 
 
 // 定义所有合法的游戏和卡池组合，用于前置校验
 const VALID_POOLS = {
@@ -59,12 +60,6 @@ export class gachaCalc extends plugin {
             return true;
         }
 
-        // 分布模式的特殊功能仅支持角色池
-        if (mode === 'distribution' && args.pool !== 'character') {
-            await this.reply('抱歉，返还物分布和预算概率计算目前仅支持【角色池】。');
-            return true;
-        }
-
         await this.reply(`正在光速计算中，请稍候... (模式: ${mode})`);
         args.mode = mode;
 
@@ -86,15 +81,16 @@ export class gachaCalc extends plugin {
      * @returns {Promise<string>} 返回一个包含JSON结果字符串的Promise
      */
     runPythonCalculator(args) {
-        // 使用Node.js标准模块元数据来定位文件，这是最健壮的方式
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
         const pluginRoot = path.join(__dirname, '..');
-        const pyScriptPath = path.join(pluginRoot, 'apps', 'test.py');
+        const pyScriptPath = path.join(pluginRoot, 'example', 'test.py');
+        const pythonCommand = os.platform() === 'win32' ? 'python' : 'python3';
 
         return new Promise((resolve, reject) => {
             const argsJson = JSON.stringify(args);
-            const pyProcess = spawn('python3', [pyScriptPath, argsJson]);
+            // 动态确定命令
+            const pyProcess = spawn(pythonCommand, [pyScriptPath, argsJson]);
 
             let result = '';
             let errorMessage = '';
@@ -103,7 +99,8 @@ export class gachaCalc extends plugin {
             pyProcess.stderr.on('data', (data) => { errorMessage += data.toString(); });
 
             pyProcess.on('error', (err) => {
-                reject(new Error(`错误：无法启动Python计算核心。\n请确认服务器已安装Python 3和numpy库。\n底层错误: ${err.message}`));
+                // 优化了错误提示
+                reject(new Error(`错误：无法启动Python计算核心。\n请确认服务器已安装Python 3和numpy，并且 '${pythonCommand}' 命令在系统路径中可用。\n底层错误: ${err.message}`));
             });
 
             pyProcess.on('close', (code) => {
@@ -188,7 +185,7 @@ ${this.formatInitialState(args)}
             stateStr += `\n明光计数: ${initialState.mingguangCounter}`;
         }
         if (args.mode === 'distribution' && args.pool === 'character') {
-            stateStr += ` | UP四星状态: ${args.up4C6 ? '已满命' : '未满命'}`;
+            stateStr += ` \nUP四星状态: ${args.up4C6 ? '已满命' : '未满命'}`;
         }
         return stateStr;
     }
@@ -251,7 +248,7 @@ ${this.formatInitialState(args)}
  • 垫抽: 20抽, 50垫 (默认0)
  • 保底: 大保底, 小保底 (默认小保底)
  • 预算: 预算180抽 (分布模式专用, 计算成功率)
- • 明光: 明光2 (原神角色池专用)
+ • 明光: 明光2 (原神角色池专用)(计算方法：自上次小保底不歪开始连续歪了几次)
  • 定轨: 定轨1 (原神武器池专用)
  • 四星满命: (分布模式, 角色池专用)
 
