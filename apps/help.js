@@ -1,6 +1,8 @@
 import { exec } from 'child_process'
+import path from 'path'
+import { fileURLToPath } from 'url'
 export class XtowerHelp extends plugin {
-  constructor () {
+  constructor() {
     super({
       name: 'Xtower 插件帮助',
       dsc: 'Xtower-Plugin 插件功能帮助',
@@ -23,7 +25,7 @@ export class XtowerHelp extends plugin {
    * 异步执行的帮助函数
    * @param {object} e 消息事件对象
    */
-  async showHelp (e) {
+  async showHelp(e) {
     const helpMsg = `Xtower-Plugin 功能帮助
 --------------------
 【随机歌词】
@@ -88,15 +90,23 @@ export class XtowerHelp extends plugin {
     return true
   }
 
-    /**
+  /**
    * 显示插件的版本信息
    * @param {object} e 消息事件对象
    */
-  async showVersion (e) {
+  async showVersion(e) {
+    // 1. 获取当前文件(help.js)的绝对路径
+    const __filename = fileURLToPath(import.meta.url);
+    // 2. 获取当前文件所在的目录(apps)
+    const __dirname = path.dirname(__filename);
+    // 3. 从apps目录往上走一级，得到插件的根目录
+    const pluginRoot = path.join(__dirname, '..');
+
     // 这条命令会获取最新一次git commit的信息，并用|||分隔
     const cmd = 'git log -1 --pretty=format:"%h|||%s|||%an|||%b"'
 
-    exec(cmd, { cwd: this.dir }, (error, stdout, stderr) => {
+    // 使用我们自己计算出的正确路径！
+    exec(cmd, { cwd: pluginRoot }, (error, stdout, stderr) => {
       if (error) {
         console.error('获取Git版本信息失败:', error)
         e.reply('获取版本信息失败，可能是当前环境没有Git或这不是一个Git仓库。')
