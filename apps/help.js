@@ -1,3 +1,4 @@
+import { exec } from 'child_process'
 export class XtowerHelp extends plugin {
   constructor () {
     super({
@@ -9,6 +10,10 @@ export class XtowerHelp extends plugin {
         {
           reg: '^#弦塔帮助$', // 匹配 #弦塔帮助
           fnc: 'showHelp'
+        },
+        {
+          reg: '^#弦塔版本$', // 匹配 #弦塔版本
+          fnc: 'showVersion'
         }
       ]
     })
@@ -80,6 +85,52 @@ export class XtowerHelp extends plugin {
     await e.reply(helpMsg)
 
     // return true 阻止消息继续向下传递
+    return true
+  }
+
+    /**
+   * 显示插件的版本信息
+   * @param {object} e 消息事件对象
+   */
+  async showVersion (e) {
+    // 这条命令会获取最新一次git commit的信息，并用|||分隔
+    const cmd = 'git log -1 --pretty=format:"%h|||%s|||%an|||%b"'
+
+    exec(cmd, { cwd: this.dir }, (error, stdout, stderr) => {
+      if (error) {
+        console.error('获取Git版本信息失败:', error)
+        e.reply('获取版本信息失败，可能是当前环境没有Git或这不是一个Git仓库。')
+        return
+      }
+
+      if (stderr) {
+        console.error('获取Git版本信息时出错:', stderr)
+        e.reply('获取版本信息时出错，详情请查看后台日志。')
+        return
+      }
+
+      // 解析返回的信息
+      const parts = stdout.trim().split('|||')
+      const hash = parts[0]
+      const title = parts[1]
+      const author = parts[2]
+      let body = parts[3]
+
+      if (!body || body.trim() === '') {
+        body = '作者这次偷懒了，没有写更新说明~'
+      }
+
+      // 构建要发送的消息
+      const versionMsg = `Xtower-Plugin 版本信息
+--------------------
+版本：${hash}
+作者：${author}
+更新标题：${title}
+更新说明：${body}`
+
+      e.reply(versionMsg)
+    })
+
     return true
   }
 }
