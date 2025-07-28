@@ -20,7 +20,8 @@ const GAME_PRESETS = {
   'default': {
     name: '默认板子 (6-12人)',
     playerCount: { min: 3, max: 12 },
-    roles: null // null 表示使用动态角色分配
+    roles: null,
+    ruleset: '屠城' // 默认规则是屠城
   },
   '屠边局': {
     name: '经典屠边局 (9人)',
@@ -31,7 +32,8 @@ const GAME_PRESETS = {
       [ROLES.WITCH]: 1,
       [ROLES.HUNTER]: 1,
       [ROLES.VILLAGER]: 3
-    }
+    },
+    ruleset: '屠边'
   },
   '预女猎白': {
     name: '预女猎白 (12人)',
@@ -41,12 +43,12 @@ const GAME_PRESETS = {
       [ROLES.SEER]: 1,
       [ROLES.WITCH]: 1,
       [ROLES.HUNTER]: 1,
-      [ROLES.IDIOT]: 1, // 白痴
+      [ROLES.IDIOT]: 1,
       [ROLES.VILLAGER]: 4
-    }
+    },
+    ruleset: '屠边' //这个板子通常是屠边规则
   }
 };
-
 const AUTO_MUTE_ENABLED = true; // 自动禁言功能开关
 
 const TAGS = {
@@ -274,9 +276,9 @@ class WerewolfGame {
     // 游戏状态机
     this.gameState = initialData.gameState || {
       isRunning: false,        // 游戏是否正在进行
-      currentPhase: null,      // 当前阶段 (例如 'night', 'day_speak', 'day_vote')
+      currentPhase: null,      // 当前阶段 (例如 `night_phase_1`, 'day_speak', 'day_vote')
       currentDay: 0,           // 当前天数
-      status: 'waiting',       // 游戏状态 (waiting, starting, night, day_speak, day_vote, hunter_shooting, wolf_king_clawing, ended)
+      status: 'waiting',       // 游戏状态 (waiting, starting, night_phase_1, night_phase_2, day_speak, day_vote, hunter_shooting, wolf_king_clawing, ended)
       hostUserId: null,        // 房主ID
       nightActions: {},        // 夜晚行动记录 (按角色分类)
       lastProtectedId: null,   // 守卫上晚守护的目标ID，用于防止连守
@@ -662,7 +664,7 @@ class WerewolfGame {
    */
 
   recordNightAction(role, userId, action) {
-    if (this.gameState.status !== 'night') return { success: false, message: '当前不是夜晚行动时间。' };
+    if (!this.gameState.status.startsWith('night_phase')) return { success: false, message: '当前不是夜晚行动时间。' };
     const player = this.players.find(p => p.userId === userId && p.isAlive);
     if (!player || player.role !== role) return { success: false, message: '无效操作：你的身份或状态不符。' };
 
@@ -713,7 +715,7 @@ class WerewolfGame {
  * @returns {object} 结算结果，包括死亡摘要和游戏是否结束。
  */
   processNightActions() {
-  if (this.gameState.status !== 'night') {
+  if (this.gameState.status !== 'night_phase_2') {
     return { message: '非夜晚，无法结算' };
   }
 
@@ -865,7 +867,7 @@ class WerewolfGame {
       this.gameState.status = 'hunter_shooting';
       this.gameState.hunterNeedsToShoot = deadHunter.userId;
       this.gameState.currentPhase = 'NIGHT_RESULT';
-      actualDeaths.filter(p => p.userId !== deadHunter.userId).forEach(p => p.isAlive = false);
+      actualDeaths.forEach(p => { p.isAlive = false; });
       return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsHunterShoot: true };
   }
 
@@ -874,7 +876,7 @@ class WerewolfGame {
       this.gameState.status = 'wolf_king_clawing';
       this.gameState.wolfKingNeedsToClaw = deadWolfKing.userId;
       this.gameState.currentPhase = 'NIGHT_RESULT';
-      actualDeaths.filter(p => p.userId !== deadWolfKing.userId).forEach(p => p.isAlive = false);
+      actualDeaths.forEach(p => { p.isAlive = false; });
       return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true };
   }
 
@@ -885,7 +887,7 @@ class WerewolfGame {
       this.endGame();
       return { 
           success: true, 
-          summary: finalSummary.join('\n'), // FIX: Only return night summary, not the whole game over message
+          summary: finalSummary.join('\n'),
           gameEnded: true, 
           winner: gameStatus.winner, 
           finalRoles: this.getFinalRoles(),
@@ -1043,7 +1045,7 @@ class WerewolfGame {
     this.endGame(gameStatus.winner)
     return { success: true, summary: voteSummary.join('\n'), gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
   } else {
-    this.gameState.status = 'night' // 进入夜晚
+    this.gameState.status = 'night_phase_1' // 进入夜晚第一阶段
     return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
     }
   }
@@ -1109,17 +1111,47 @@ class WerewolfGame {
   }
 
   /**
-   * 检查游戏是否达到结束条件。
+   * 检查游戏是否达到结束条件 (支持屠城和屠边规则)。
    * @returns {object} 包含 `isEnd` (布尔值) 和 `winner` (胜利阵营名称) 的对象。
    */
   checkGameStatus() {
-    const alivePlayers = this.players.filter(p => p.isAlive)
+    // --- 第一步：定义好人和狼人阵营的角色 ---
+    const goodGuyRoles = [ROLES.VILLAGER, ROLES.SEER, ROLES.WITCH, ROLES.HUNTER, ROLES.GUARD, ROLES.IDIOT];
+    const godRoles = [ROLES.SEER, ROLES.WITCH, ROLES.HUNTER, ROLES.GUARD, ROLES.IDIOT];
+    const villagerRoles = [ROLES.VILLAGER];
     const wolfRoles = [ROLES.WEREWOLF, ROLES.WOLF_KING, ROLES.WHITE_WOLF_KING];
-    const aliveWerewolves = alivePlayers.filter(p => wolfRoles.includes(p.role)).length
-    const aliveHumans = alivePlayers.length - aliveWerewolves // 存活好人数量
-    if (aliveWerewolves === 0) return { isEnd: true, winner: '好人' } // 狼人全部死亡，好人胜利
-    if (aliveWerewolves >= aliveHumans) return { isEnd: true, winner: '狼人' } // 狼人数量大于等于好人数量，狼人胜利
-    return { isEnd: false } // 游戏继续
+
+    // --- 第二步：统计各类角色的存活数量 ---
+    const alivePlayers = this.players.filter(p => p.isAlive);
+    const aliveWerewolves = alivePlayers.filter(p => wolfRoles.includes(p.role)).length;
+    const aliveGods = alivePlayers.filter(p => godRoles.includes(p.role)).length;
+    const aliveVillagers = alivePlayers.filter(p => villagerRoles.includes(p.role)).length;
+    const aliveGoodGuys = alivePlayers.filter(p => goodGuyRoles.includes(p.role)).length;
+
+    // --- 第三步：根据规则进行胜负判断 ---
+
+    // 规则一：好人胜利条件 (所有规则通用)
+    // 场上没有存活的狼人了。
+    if (aliveWerewolves === 0) {
+      return { isEnd: true, winner: '好人' };
+    }
+
+    // 规则二：狼人胜利条件 (需要区分游戏模式)
+    
+    if (this.ruleset === '屠边') {
+      // 场上已经没有神民了，或者场上已经没有普通村民了。
+      if (aliveGods === 0 || aliveVillagers === 0) {
+        return { isEnd: true, winner: '狼人' };
+      }
+    } else { // 默认使用屠城规则
+      // 存活的狼人数量大于或等于存活的好人数量。
+      if (aliveWerewolves >= aliveGoodGuys) {
+        return { isEnd: true, winner: '狼人' };
+      }
+    }
+
+    // 如果以上条件都不满足，则游戏继续
+    return { isEnd: false };
   }
 
   /**
@@ -1463,7 +1495,9 @@ export class WerewolfPlugin extends plugin {
         preset = GAME_PRESETS['default'];
         game.gameState.presetName = 'default'; // 更新游戏状态中的板子名称
     }
-
+    
+    game.ruleset = preset.ruleset;
+    
     // 根据板子或默认规则计算角色分配
     const distribution = preset.roles ? game.assignRolesFromPreset(preset) : game.calculateRoleDistribution();
 
@@ -1506,7 +1540,7 @@ export class WerewolfPlugin extends plugin {
     }
     const { instance: game, groupId } = gameInfo;
 
-    if (!game.gameState.isRunning || game.gameState.status !== 'night') {
+    if (!game.gameState.isRunning || !game.gameState.status.startsWith('night_phase')) {
       return;
     }
 
@@ -1574,8 +1608,8 @@ export class WerewolfPlugin extends plugin {
     const { groupId, instance: game } = gameInfo;
 
     // 2. 验证游戏阶段：必须是夜晚
-    if (game.gameState.status !== 'night') {
-      return e.reply('非夜晚时间，狼人频道已关闭。');
+    if (game.gameState.status !== 'night_phase_1') {
+      return e.reply('非狼人行动时间，狼人频道已关闭。');
     }
 
     // 3. 验证发送者身份：必须是存活的狼人阵营成员
@@ -1729,6 +1763,7 @@ export class WerewolfPlugin extends plugin {
 
     const targetPlayer = game.players.find(p => p.tempId === targetTempId);
     if (targetPlayer) targetPlayer.isAlive = false; // 被带走的玩家死亡
+    if (hunterPlayer) hunterPlayer.isAlive = false; // 猎人死亡
     
     const hunterInfo = game.getPlayerInfo(userId);
     const targetInfo = game.getPlayerInfo(targetPlayer.userId);
@@ -1832,7 +1867,7 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
         await this.endGameFlow(groupId, game, gameStatus.winner);
     } else {
-        game.gameState.status = 'night'; // 进入夜晚
+        game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
         await this.saveGameAll(groupId, game);
         await this.transitionToNextPhase(groupId, game);
     }
@@ -1888,7 +1923,7 @@ export class WerewolfPlugin extends plugin {
       if (gameStatus.isEnd) {
           await this.endGameFlow(groupId, game, gameStatus.winner);
       } else {
-          game.gameState.status = 'night'; // 进入夜晚
+          game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
           await this.saveGameAll(groupId, game);
           await this.transitionToNextPhase(groupId, game);
       }
@@ -2102,59 +2137,84 @@ export class WerewolfPlugin extends plugin {
    */
   async startNightPhase(groupId, game) {
     if (!game) return
-    game.gameState.status = 'night'
-    game.gameState.currentDay++ // 天数增加
+    game.gameState.status = 'night_phase_1'; // 使用更明确的状态
+    game.gameState.currentDay++; // 天数增加
 
-    const totalNightDuration = this.WEREWOLF_PHASE_DURATION + this.WITCH_ACTION_DURATION
-    game.gameState.deadline = Date.now() + totalNightDuration // 设置夜晚阶段截止时间
-    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]) // 添加到截止时间ZSET
-    await this.saveGameAll(groupId, game)
+    //截止时间只计算狼人阶段
+    game.gameState.deadline = Date.now() + this.WEREWOLF_PHASE_DURATION;
+    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
+    await this.saveGameAll(groupId, game);
 
-    await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentDay} 天 - 夜晚 ---`)
-    await this.sendSystemGroupMsg(groupId, `天黑请闭眼... 夜晚行动阶段开始，总时长 ${totalNightDuration / 1000} 秒。\n（其中狼人及其他角色行动时间 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒，女巫单独行动时间 ${this.WITCH_ACTION_DURATION / 1000} 秒）\n【夜晚行动阶段】有身份的玩家请根据私聊提示进行操作。`)
+    await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentDay} 天 - 夜晚 ---`);
+    await this.sendSystemGroupMsg(groupId, `天黑请闭眼... 狼人等角色行动阶段开始，时长 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒。\n【夜晚行动阶段】有身份的玩家请根据私聊提示进行操作。`);
 
     if (AUTO_MUTE_ENABLED && game.gameState.hasPermission) { // 使用AUTO_MUTE_ENABLED常量
         await this.sendSystemGroupMsg(groupId, "正在禁言所有存活玩家...");
         await this.muteAllPlayers(groupId, game, true, 3600); // 禁言所有存活玩家
     }
 
-    const alivePlayerList = game.getAlivePlayerList()
-    // 私聊提示有夜晚行动的角色
+    const alivePlayerList = game.getAlivePlayerList();
     for (const player of game.players.filter(p => p.isAlive)) {
-      let prompt = null
+      let prompt = null;
       switch (player.role) {
-        case 'WEREWOLF': 
-          // 明确告知狼人行动结束时间
-          prompt = `狼人请行动。\n请私聊我：杀 [编号]\n可使用#狼聊或#w开头在夜晚的狼人频道进行发言，你的发言会广播给其他狼人\n请在狼人及其他角色行动时间（共 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒）内完成操作。\n${alivePlayerList}`; 
-          break
-        case 'SEER': prompt = `预言家请行动。\n请私聊我：查验 [编号]\n请在狼人及其他角色行动时间（共 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒）内完成操作。\n${alivePlayerList}`; break
+        case 'WEREWOLF':
+          prompt = `狼人请行动。\n请私聊我：杀 [编号]\n可使用#狼聊或#w开头在夜晚的狼人频道进行发言。\n请在 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒内完成操作。\n${alivePlayerList}`;
+          break;
+        case 'SEER':
+          prompt = `预言家请行动。\n请私聊我：查验 [编号]\n请在 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒内完成操作。\n${alivePlayerList}`;
+          break;
         case 'GUARD':
-          let guardPrompt = `守卫请行动。\n`
-          if (game.gameState.lastProtectedId) guardPrompt += `（你上晚守护了 ${game.getPlayerInfo(game.gameState.lastProtectedId)}，不能连守）\n`
-          prompt = guardPrompt + `请私聊我：守 [编号]\n请在狼人及其他角色行动时间（共 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒）内完成操作。\n${alivePlayerList}`
-          break
+          let guardPrompt = `守卫请行动。\n`;
+          if (game.gameState.lastProtectedId) guardPrompt += `（你上晚守护了 ${game.getPlayerInfo(game.gameState.lastProtectedId)}，不能连守）\n`;
+          prompt = guardPrompt + `请私聊我：守 [编号]\n请在 ${this.WEREWOLF_PHASE_DURATION / 1000} 秒内完成操作。\n${alivePlayerList}`;
+          break;
       }
-      if (prompt) await this.sendDirectMessage(player.userId, prompt, groupId)
+      if (prompt) await this.sendDirectMessage(player.userId, prompt, groupId);
     }
 
-    // 设置女巫单独行动的延迟提示
-    setTimeout(async () => {
-      const currentGame = await this.getGameInstance(groupId) // 获取最新游戏实例
-      if (!currentGame || currentGame.gameState.status !== 'night') return // 游戏状态已改变则不发送
-      const witchPlayer = currentGame.players.find(p => p.role === 'WITCH' && p.isAlive)
-      if (!witchPlayer) return
+  }
 
-      const attackTargetId = currentGame.getWerewolfAttackTargetId() // 获取狼人袭击目标
-      let witchPrompt = `女巫请行动。\n`
-      if (attackTargetId) witchPrompt += `昨晚 ${currentGame.getPlayerInfo(attackTargetId)} 被袭击了。\n`
-      else witchPrompt += `昨晚无人被袭击。\n`
-      witchPrompt += `药剂状态：解药 ${currentGame.potions.save ? '可用' : '已用'}，毒药 ${currentGame.potions.kill ? '可用' : '已用'}。\n`
-      if (currentGame.potions.save) witchPrompt += `使用解药请私聊我：救 [编号]\n`
-      if (currentGame.potions.kill) witchPrompt += `使用毒药请私聊我：毒 [编号]\n`
-      // 明确告知女巫行动结束时间
-      witchPrompt += `你的行动时间将在夜晚结束时截止（剩余约 ${this.WITCH_ACTION_DURATION / 1000} 秒）。\n${currentGame.getAlivePlayerList()}`
-      await this.sendDirectMessage(witchPlayer.userId, witchPrompt, groupId)
-    }, this.WEREWOLF_PHASE_DURATION)
+  /**
+   * 过渡到夜晚阶段二 - 女巫行动。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   * @returns {Promise<void>}
+   */
+  async transitionToWitchPhase(groupId, game) {
+    if (!game || game.gameState.status !== 'night_phase_1') return; // 确保是从正确的阶段过来
+
+    game.gameState.status = 'night_phase_2'; // 进入女巫阶段
+    
+    // 将狼人的"待处理"行动转移到"最终决定"
+    // 注意：这里我们只转移狼人的行动，其他行动暂时不动
+    if (game.gameState.pendingNightActions['WEREWOLF']) {
+        game.gameState.nightActions['WEREWOLF'] = game.gameState.pendingNightActions['WEREWOLF'];
+    }
+
+    const attackTargetId = game.getWerewolfAttackTargetId(); 
+
+    // 设置女巫阶段的截止时间
+    game.gameState.deadline = Date.now() + this.WITCH_ACTION_DURATION;
+    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
+    await this.saveGameAll(groupId, game);
+
+    // 准备并发送给女巫的私聊信息
+    const witchPlayer = game.players.find(p => p.role === 'WITCH' && p.isAlive);
+    if (!witchPlayer) return; // 如果女巫死了，就什么也不做
+
+    let witchPrompt = `女巫请行动。\n`;
+    if (attackTargetId) {
+        witchPrompt += `昨晚 ${game.getPlayerInfo(attackTargetId)} 被袭击了。\n`;
+    } else {
+        witchPrompt += `昨晚无人被袭击（狼人未行动或平票未统一）。\n`;
+    }
+    witchPrompt += `药剂状态：解药 ${game.potions.save ? '可用' : '已用'}，毒药 ${game.potions.kill ? '可用' : '已用'}。\n`;
+    if (game.potions.save) witchPrompt += `使用解药请私聊我：救 [编号]\n`;
+    if (game.potions.kill) witchPrompt += `使用毒药请私聊我：毒 [编号]\n`;
+    witchPrompt += `你的行动时间为 ${this.WITCH_ACTION_DURATION / 1000} 秒。\n${game.getAlivePlayerList()}`;
+    
+    await this.sendDirectMessage(witchPlayer.userId, witchPrompt, groupId);
+    await this.sendSystemGroupMsg(groupId, `狼人行动结束，开始女巫单独行动...`);
   }
 
   /**
@@ -2164,7 +2224,7 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<void>}
    */
   async processNightEnd(groupId, game) {
-    if (!game || game.gameState.status !== 'night') return;
+    if (!game || game.gameState.status !== 'night_phase_2') return;
 
     this.clearPhaseTimer(groupId); // 清除阶段计时器
     game.gameState.deadline = null; // 清理 deadline
@@ -2465,7 +2525,7 @@ async processVoteEnd(groupId, game) {
       if (gameStatus.isEnd) {
           await this.endGameFlow(groupId, game, gameStatus.winner);
       } else {
-          game.gameState.status = 'night'; // 进入夜晚
+          game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
           await this.saveGameAll(groupId, game);
           await this.transitionToNextPhase(groupId, game);
       }
@@ -2482,7 +2542,7 @@ async processVoteEnd(groupId, game) {
     const nextStatus = game.gameState.status
     console.log(`[${PLUGIN_NAME}] 状态转换 -> ${nextStatus} (群: ${groupId})`)
     switch (nextStatus) {
-      case 'night': await this.startNightPhase(groupId, game); break
+      case 'night_phase_1': await this.startNightPhase(groupId, game); break
       case 'day_speak': await this.startDayPhase(groupId, game); break
       default: console.warn(`[${PLUGIN_NAME}] 未知或非自动转换状态: ${nextStatus} (群: ${groupId})`)
     }
@@ -2542,7 +2602,12 @@ async processVoteEnd(groupId, game) {
 
         // 根据当前游戏状态调用相应的超时处理函数
         switch (game.gameState.status) {
-          case 'night': await this.processNightEnd(groupId, game); break
+          case 'night_phase_1':
+              await this.transitionToWitchPhase(groupId, game); // 狼人阶段超时，进入女巫阶段
+              break;
+          case 'night_phase_2':
+              await this.processNightEnd(groupId, game); // 女巫阶段超时，进行夜晚最终结算
+              break;
           case 'day_speak': await this.processSpeechTimeout(groupId, game, { speakerId: game.gameState.currentSpeakerUserId }); break
           case 'day_vote': await this.processVoteEnd(groupId, game); break
           case 'hunter_shooting': await this.processHunterShootEnd(groupId, game); break
