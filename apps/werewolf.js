@@ -1373,12 +1373,12 @@ export class WerewolfPlugin extends plugin {
     this.userToGroupCache = new Map(); // 用户ID到群组ID的映射缓存
     this.phaseTimers = new Map();      // 存储每个群组的阶段计时器
     // 游戏阶段持续时间常量
-    this.WEREWOLF_PHASE_DURATION = 40 * 1000; // 狼人行动阶段时长
+    this.WEREWOLF_PHASE_DURATION = 60 * 1000; // 狼人行动阶段时长
     this.WITCH_ACTION_DURATION = 30 * 1000;   // 女巫单独行动阶段时长
     this.SHERIFF_SIGNUP_DURATION = 60 * 1000;   // 警长竞选报名时长
     this.SHERIFF_SPEECH_DURATION = 60 * 1000;   // 警长竞选发言时长
     this.SHERIFF_VOTE_DURATION = 45 * 1000;     // 警长竞选投票时长
-    this.SPEECH_DURATION = 45 * 1000;         // 白天发言时长
+    this.SPEECH_DURATION = 60 * 1000;         // 白天发言时长
     this.VOTE_DURATION = 60 * 1000;           // 投票阶段时长
     this.HUNTER_SHOOT_DURATION = 30 * 1000;   // 猎人开枪时长
     this.WOLF_KING_CLAW_DURATION = 30 * 1000; // 狼王发动技能时长
