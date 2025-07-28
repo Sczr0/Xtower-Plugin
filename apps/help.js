@@ -8,11 +8,11 @@ export class XtowerHelp extends plugin {
       priority: 500, // 较高的优先级，确保能响应帮助指令
       rule: [
         {
-          reg: '^#弦塔帮助$', // 匹配 #弦塔帮助
+          reg: '^#弦塔帮助$',
           fnc: 'showHelp'
         },
         {
-          reg: '^#弦塔版本$', // 匹配 #弦塔版本
+          reg: '^#弦塔版本$',
           fnc: 'showVersion'
         }
       ]

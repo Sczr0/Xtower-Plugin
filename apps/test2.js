@@ -76,7 +76,7 @@ export class gachaCalc extends plugin {
     }
 
     /**
-     * 调用外部Python脚本的核心函数
+     * 调用外部Python脚本的函数
      * @param {object} args - 包含所有计算参数的对象
      * @returns {Promise<string>} 返回一个包含JSON结果字符串的Promise
      */
