@@ -21,6 +21,7 @@ const GAME_PRESETS = {
     name: '默认板子 (6-12人)',
     playerCount: { min: 3, max: 12 },
     roles: null,
+    hasSheriff: false,
     ruleset: '屠城' // 默认规则是屠城
   },
   '屠边局': {
@@ -33,6 +34,7 @@ const GAME_PRESETS = {
       [ROLES.HUNTER]: 1,
       [ROLES.VILLAGER]: 3
     },
+    hasSheriff: false,
     ruleset: '屠边'
   },
   '预女猎白': {
@@ -46,6 +48,7 @@ const GAME_PRESETS = {
       [ROLES.IDIOT]: 1,
       [ROLES.VILLAGER]: 4
     },
+    hasSheriff: true,
     ruleset: '屠边' //这个板子通常是屠边规则
   }
 };
@@ -281,16 +284,22 @@ class WerewolfGame {
       status: 'waiting',       // 游戏状态 (waiting, starting, night_phase_1, night_phase_2, day_speak, day_vote, hunter_shooting, wolf_king_clawing, ended)
       hostUserId: null,        // 房主ID
       nightActions: {},        // 夜晚行动记录 (按角色分类)
+      pendingNightActions: [], 
       lastProtectedId: null,   // 守卫上晚守护的目标ID，用于防止连守
       hunterNeedsToShoot: null,// 死亡猎人ID，等待开枪
       wolfKingNeedsToClaw: null, // 死亡狼王ID，等待发动技能
       currentSpeakerUserId: null, // 当前发言玩家ID
+      sheriffUserId: null,         // 警长玩家的ID
+      isSheriffElection: false,    // 是否正在进行警长竞选的总开关
+      candidateList: [],         // 警长候选人列表 (存放userId)
+      sheriffVotes: {},          // 警长投票的专门记录
       speakingOrder: [],       // 白天发言顺序
       currentSpeakerOrderIndex: -1, // 当前发言玩家在顺序中的索引
       votes: {},               // 投票记录
       eventLog: [],            // 游戏事件日志
       deadline: null,          // 当前阶段的截止时间戳
       hasPermission: false,    // 机器人是否有禁言/解禁权限
+      presetName: 'default', // 用于记录板子名称
     }
     this.potions = initialData.potions || { save: true, kill: true } // 女巫药剂状态
     this.userGroupMap = initialData.userGroupMap || {} // 用户ID到群组ID的映射
@@ -458,11 +467,13 @@ class WerewolfGame {
     this.gameState = {
       isRunning: false, currentPhase: null, currentDay: 0, status: 'waiting',
       hostUserId: hostUserId, nightActions: {}, lastProtectedId: null, hunterNeedsToShoot: null,
+      hasSheriff: false,
       wolfKingNeedsToClaw: null,
       currentSpeakerUserId: null, speakingOrder: [], currentSpeakerOrderIndex: -1, votes: {},
       eventLog: [],
       deadline: null,
       hasPermission: false,
+      lastStableStatus: null,
       presetName: presetName || 'default',
     };
     this.gameState.pendingNightActions = []; // 用于存储本晚待处理的行动
@@ -695,8 +706,7 @@ class WerewolfGame {
     }
 
     if (result.success) {
-      // --- FIX START ---
-      // 核心修复：移除之前的行动记录，确保每个玩家每晚只有一个最终行动被记录
+      // 移除之前的行动记录，确保每个玩家每晚只有一个最终行动被记录
       const existingActionIndex = this.gameState.pendingNightActions.findIndex(a => a.userId === userId);
       if (existingActionIndex > -1) {
         this.gameState.pendingNightActions.splice(existingActionIndex, 1);
@@ -756,9 +766,6 @@ class WerewolfGame {
   const killedByWerewolfId = this.getWerewolfAttackTargetId();
   console.log(`[${PLUGIN_NAME}] [DEBUG] processNightActions - killedByWerewolfId: ${killedByWerewolfId}`);
   
-  // 添加调试日志：打印所有玩家的用户ID
-  console.log(`[${PLUGIN_NAME}] [DEBUG] processNightActions - All players:`, this.players.map(p => `${p.nickname}(${p.tempId}) userId: ${p.userId} (type: ${typeof p.userId})`));
-  
   if (killedByWerewolfId) {
       // 确保数据类型一致，都转换为字符串进行比较
       const target = this.players.find(p => String(p.userId) === String(killedByWerewolfId));
@@ -805,14 +812,11 @@ class WerewolfGame {
 
   console.log(`[${PLUGIN_NAME}] [DEBUG] Night Action Processing - Checking for deaths...`);
   this.players.filter(p => p.isAlive).forEach(player => {
-      console.log(`[${PLUGIN_NAME}] [DEBUG] Checking player ${this.getPlayerInfo(player.userId)}, tags:`, player.tags);
       
       if (!player.tags.includes(TAGS.DYING)) {
-          console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} is alive and not marked as DYING.`);
           return;
       }
 
-      console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} is marked as DYING. Checking protection/save status.`);
       let shouldDie = true;
       let causeOfDeath = 'UNKNOWN';
 
@@ -820,34 +824,26 @@ class WerewolfGame {
       const isSavedByWitch = player.tags.includes(TAGS.SAVED_BY_WITCH);
       const isPoisoned = player.tags.includes(TAGS.POISONED_BY_WITCH);
 
-      console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)}: isGuarded=${isGuarded}, isSavedByWitch=${isSavedByWitch}, isPoisoned=${isPoisoned}`);
-
       if (isPoisoned) {
           causeOfDeath = 'WITCH';
           shouldDie = true;
-          console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} was poisoned by Witch.`);
       } else {
           if (isGuarded && isSavedByWitch) {
               causeOfDeath = 'GUARD_WITCH_CONFLICT';
               shouldDie = true;
-              console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} was wolf-attacked, guarded AND saved by Witch (同守同救).`);
           } else if (isGuarded || isSavedByWitch) {
               shouldDie = false;
               causeOfDeath = isGuarded ? 'GUARDED' : 'SAVED_BY_WITCH';
-              console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} was wolf-attacked and ${causeOfDeath}, survived.`);
           } else {
               causeOfDeath = 'WEREWOLF';
               shouldDie = true;
-              console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} was wolf-attacked and NOT protected/saved, will die.`);
           }
       }
 
       if (shouldDie) {
           deathCauses[player.userId] = causeOfDeath;
           actualDeaths.push(player);
-          console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} added to actualDeaths list. Cause: ${causeOfDeath}`);
       } else {
-          console.log(`[${PLUGIN_NAME}] [DEBUG] Player ${this.getPlayerInfo(player.userId)} will NOT die.`);
       }
   });
 
@@ -868,7 +864,7 @@ class WerewolfGame {
       this.gameState.hunterNeedsToShoot = deadHunter.userId;
       this.gameState.currentPhase = 'NIGHT_RESULT';
       actualDeaths.forEach(p => { p.isAlive = false; });
-      return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsHunterShoot: true };
+      return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsHunterShoot: true, deadPlayers: actualDeaths };
   }
 
   const deadWolfKing = actualDeaths.find(p => p.role === ROLES.WOLF_KING);
@@ -877,7 +873,7 @@ class WerewolfGame {
       this.gameState.wolfKingNeedsToClaw = deadWolfKing.userId;
       this.gameState.currentPhase = 'NIGHT_RESULT';
       actualDeaths.forEach(p => { p.isAlive = false; });
-      return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true };
+      return { success: true, summary: finalSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true , deadPlayers: actualDeaths };
   }
 
   actualDeaths.forEach(p => { p.isAlive = false; });
@@ -891,7 +887,8 @@ class WerewolfGame {
           gameEnded: true, 
           winner: gameStatus.winner, 
           finalRoles: this.getFinalRoles(),
-          needsHunterShoot: false 
+          needsHunterShoot: false,
+          deadPlayers: actualDeaths
       };
   } else {
       this.gameState.status = 'day_speak';
@@ -899,10 +896,63 @@ class WerewolfGame {
           success: true, 
           summary: finalSummary.join('\n'), 
           gameEnded: false, 
-          needsHunterShoot: false 
+          needsHunterShoot: false,
+          deadPlayers: actualDeaths
       };
   }
 }
+
+  /**
+   * 添加一名玩家到警长候选人列表。
+   * @param {string} userId - 玩家的用户ID。
+   * @returns {object} 包含 success(布尔值) 和 message(字符串) 的结果对象。
+   */
+  addSheriffCandidate(userId) {
+    const player = this.players.find(p => p.userId === userId);
+    // 检查玩家是否存在且存活
+    if (!player || !player.isAlive) {
+      return { success: false, message: '你已出局或不在游戏中，无法上警。' };
+    }
+    
+    // 检查是否已经上过警了
+    if (this.gameState.candidateList.includes(userId)) {
+      return { success: false, message: '你已经上警了，请勿重复操作。' };
+    }
+
+    // 将玩家ID添加到候选人列表
+    this.gameState.candidateList.push(userId);
+    
+    return { 
+      success: true, 
+      message: '你已成功加入警长竞选！',
+      player: this.getPlayerInfo(userId) // 顺便返回玩家信息，方便外部使用
+    };
+  }
+
+  /**
+   * 从警长竞选中退水。
+   * @param {string} userId - 想要退水的玩家ID。
+   * @returns {object} 包含 success 和 message 的结果对象。
+   */
+  withdrawFromSheriffElection(userId) {
+    // 检查玩家是否是候选人
+    const candidateIndex = this.gameState.candidateList.indexOf(userId);
+    if (candidateIndex === -1) {
+      return { success: false, message: '你不在警长候选人名单中，无法退水。' };
+    }
+
+    // 从候选人名单中移除
+    this.gameState.candidateList.splice(candidateIndex, 1);
+    
+    // 如果当前正在发言的是退水者，我们需要把发言权移交给下一个人
+    // （这部分逻辑可以做得更复杂，但为了简化，我们暂时不处理，超时会自动跳过）
+
+    return { 
+      success: true,
+      message: '你已成功退水。',
+      remainingCandidates: this.gameState.candidateList.length 
+    };
+  }
 
   /**
    * 记录玩家的投票。
@@ -938,117 +988,202 @@ class WerewolfGame {
   }
 
   /**
-   * 移动到下一个发言玩家。
-   * @returns {string|null} 下一个发言玩家的ID，如果没有则返回null。
+   * 移动到下一个发言者，并更新内部状态。
+   * @returns {string|null} 下一个发言者的ID，如果没有则返回null。
    */
   moveToNextSpeaker() {
-    if (this.gameState.currentSpeakerOrderIndex >= this.gameState.speakingOrder.length - 1) {
-      this.gameState.currentSpeakerUserId = null;
-      return null;
-    }
+    // 先将索引+1，移动到下一个位置
     this.gameState.currentSpeakerOrderIndex++;
-    const nextSpeakerId = this.gameState.speakingOrder[this.gameState.currentSpeakerOrderIndex];
+    const currentIndex = this.gameState.currentSpeakerOrderIndex;
+    const speakingOrder = this.gameState.speakingOrder;
+
+    // 再判断新的索引是否超出了范围
+    if (currentIndex >= speakingOrder.length) {
+      this.gameState.currentSpeakerUserId = null; // 清理当前发言人
+      return null; // 明确地告诉外面：没有下一个了
+    }
+
+    // 如果没超出范围，就获取并设置新的发言人
+    const nextSpeakerId = speakingOrder[currentIndex];
     this.gameState.currentSpeakerUserId = nextSpeakerId;
     return nextSpeakerId;
+  }
+
+  /**
+   * 结算警长投票。
+   * @returns {object} 包含计票摘要和结果的对象。
+   */
+  processSheriffVotes() {
+    const votes = this.gameState.sheriffVotes;
+    const voteCounts = {}; // { targetId: count }
+
+    // 初始化所有候选人的票数为0
+    this.gameState.candidateList.forEach(id => {
+      voteCounts[id] = 0;
+    });
+
+    // 计票
+    for (const voterId in votes) {
+      const targetId = votes[voterId];
+      if (voteCounts.hasOwnProperty(targetId)) {
+        voteCounts[targetId]++;
+      }
+    }
+
+    // 生成计票摘要
+    let summaryLines = ["--- 警长投票结果 ---"];
+    for (const targetId in voteCounts) {
+      const targetInfo = this.getPlayerInfo(targetId);
+      const voters = Object.keys(votes).filter(voterId => votes[voterId] === targetId);
+      const voterInfos = voters.map(vId => this.getPlayerInfo(vId).nickname).join('、') || '无人';
+      summaryLines.push(`${targetInfo.nickname}(${targetInfo.tempId}号): ${voteCounts[targetId]}票 (来自: ${voterInfos})`);
+    }
+    const summary = summaryLines.join('\n');
+
+    // 找出最高票数和候选人
+    let maxVotes = 0;
+    let topCandidates = [];
+    for (const targetId in voteCounts) {
+      if (voteCounts[targetId] > maxVotes) {
+        maxVotes = voteCounts[targetId];
+        topCandidates = [targetId];
+      } else if (voteCounts[targetId] === maxVotes && maxVotes > 0) {
+        topCandidates.push(targetId);
+      }
+    }
+
+    // 判断结果
+    if (maxVotes === 0 || topCandidates.length === 0) {
+      return { summary, sheriffElected: false, isTie: false }; // 无人投票
+    }
+    if (topCandidates.length === 1) {
+      this.gameState.sheriffUserId = topCandidates[0];
+      return { summary, sheriffElected: true, isTie: false, sheriffId: topCandidates[0] }; // 唯一警长
+    }
+    
+    // 平票，更新候选人列表为平票者，为PK做准备
+    this.gameState.candidateList = topCandidates;
+    return { summary, sheriffElected: false, isTie: true }; // 平票
   }
 
   /**
    * 结算白天投票结果。
    * @returns {object} 结算结果，包括投票摘要和游戏是否结束。
    */
+  /**
+   * 结算白天投票结果。(已升级，会返回被票出局的玩家信息)
+   * @returns {object} 结算结果，包括投票摘要、游戏是否结束以及被票出局的玩家(playerKicked)。
+   */
   processVotes() {
-    if (this.gameState.status !== 'day_vote') return { message: '非投票阶段，无法计票' }
+    if (this.gameState.status !== 'day_vote') return { message: '非投票阶段，无法计票' };
 
     const currentDay = this.gameState.currentDay;
     const logEvent = (event) => this.gameState.eventLog.push({ day: currentDay, phase: 'day', ...event });
 
+    // --- 计票逻辑---
     const voteCounts = {} // 记录每个玩家获得的票数
     const voteDetails = {} // 记录每个玩家被谁投票
-    this.players.filter(p => p.isAlive).forEach(voter => {
-      const targetTempId = this.gameState.votes[voter.userId]
-      if (targetTempId) {
-        voteCounts[targetTempId] = (voteCounts[targetTempId] || 0) + 1
-        if (!voteDetails[targetTempId]) voteDetails[targetTempId] = []
-        voteDetails[targetTempId].push(`${voter.nickname}(${voter.tempId}号)`)
-      } else { // 弃票
-        voteCounts['弃票'] = (voteCounts['弃票'] || 0) + 1
-        if (!voteDetails['弃票']) voteDetails['弃票'] = []
-        voteDetails['弃票'].push(`${voter.nickname}(${voter.tempId}号)`)
-      }
-    })
-
-    let voteSummary = ["投票结果："]
-    for (const targetTempId in voteCounts) {
-      if (targetTempId === '弃票') continue // 跳过弃票的统计
-      const targetPlayer = this.players.find(p => p.tempId === targetTempId)
-      if (targetPlayer) voteSummary.push(`${targetPlayer.nickname}(${targetTempId}号): ${voteCounts[targetTempId]}票 (${(voteDetails[targetTempId] || []).join(', ')})`)
-    }
-    if (voteCounts['弃票']) voteSummary.push(`弃票: ${voteCounts['弃票']}票 (${(voteDetails['弃票'] || []).join(', ')})`)
-
-    let maxVotes = 0
-    let tiedPlayers = [] // 记录平票的玩家
-    for (const targetTempId in voteCounts) {
-      if (targetTempId === '弃票') continue
-      if (voteCounts[targetTempId] > maxVotes) {
-        maxVotes = voteCounts[targetTempId]
-        tiedPlayers = [targetTempId]
-      } else if (voteCounts[targetTempId] === maxVotes && maxVotes > 0) {
-        tiedPlayers.push(targetTempId)
-      }
-    }
-
-    this.gameState.votes = {} // 清空投票记录
-    if (tiedPlayers.length === 1) { // 有唯一被投出玩家
-    const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0])
-    if (eliminatedPlayer) {
-      const voters = voteDetails[eliminatedPlayer.tempId] || [];
-      logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: voters });
+    this.players.filter(p => p.isAlive && !p.tags.includes(TAGS.REVEALED_IDIOT)).forEach(voter => { // 确保白痴不参与计票
+      const targetTempId = this.gameState.votes[voter.userId];
       
-      if (eliminatedPlayer.role === ROLES.IDIOT) { // 白痴被投出
+      // 判断投票权重，警长为1.5票，其他人为1票
+      const voteWeight = (voter.userId === this.gameState.sheriffUserId) ? 1.5 : 1;
+      
+      if (targetTempId && targetTempId !== '弃票') { // 如果投票给某个人
+        voteCounts[targetTempId] = (voteCounts[targetTempId] || 0) + voteWeight;
+        if (!voteDetails[targetTempId]) voteDetails[targetTempId] = [];
+        voteDetails[targetTempId].push(`${voter.nickname}(${voter.tempId}号)`);
+      } else { // 如果是弃票
+        // 注意：弃票不计入权重，始终算1票
+        voteCounts['弃票'] = (voteCounts['弃票'] || 0) + 1;
+        if (!voteDetails['弃票']) voteDetails['弃票'] = [];
+        voteDetails['弃票'].push(`${voter.nickname}(${voter.tempId}号)`);
+      }
+    });
+
+    let voteSummary = ["投票结果："];
+    for (const targetTempId in voteCounts) {
+      if (targetTempId === '弃票') continue;
+      const targetPlayer = this.players.find(p => p.tempId === targetTempId);
+      if (targetPlayer) voteSummary.push(`${targetPlayer.nickname}(${targetTempId}号): ${voteCounts[targetTempId]}票 (${(voteDetails[targetTempId] || []).join(', ')})`);
+    }
+    if (voteCounts['弃票']) voteSummary.push(`弃票: ${voteCounts['弃票']}票 (${(voteDetails['弃票'] || []).join(', ')})`);
+
+    let maxVotes = 0;
+    let tiedPlayers = [];
+    for (const targetTempId in voteCounts) {
+      if (targetTempId === '弃票') continue;
+      if (voteCounts[targetTempId] > maxVotes) {
+        maxVotes = voteCounts[targetTempId];
+        tiedPlayers = [targetTempId];
+      } else if (voteCounts[targetTempId] === maxVotes && maxVotes > 0) {
+        tiedPlayers.push(targetTempId);
+      }
+    }
+
+    // --- 处理出局玩家的逻辑 ---
+
+    this.gameState.votes = {}; // 清空旧的投票记录
+
+    let playerKickedToday = null; // 定义一个变量，用来存放今天被票出去的玩家
+
+    if (tiedPlayers.length === 1) { // 有唯一最高票玩家
+      const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0]);
+      if (eliminatedPlayer) {
+        const voters = voteDetails[eliminatedPlayer.tempId] || [];
+        logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: voters });
+
+        if (eliminatedPlayer.role === ROLES.IDIOT) { // 如果是白痴
           eliminatedPlayer.tags.push(TAGS.REVEALED_IDIOT);
           voteSummary.push(`${eliminatedPlayer.nickname}(${eliminatedPlayer.tempId}号) 被投票出局，但他/她亮出了【白痴】的身份！他/她不会死亡，但将失去后续的投票权。`);
-          // 不在这里保存数据，而是在返回结果中标记需要保存
-          return { 
-            success: true, 
-            summary: voteSummary.join('\n'), 
-            gameEnded: false, 
-            idiotRevealed: true, // 新增标记
-            revealedIdiotId: eliminatedPlayer.userId 
+          // 白痴没死，所以 playerKickedToday 保持为 null
+          return {
+            success: true, summary: voteSummary.join('\n'), gameEnded: false, 
+            idiotRevealed: true, revealedIdiotId: eliminatedPlayer.userId, playerKicked: null 
           };
-      } else { // 其他角色被投出
-          eliminatedPlayer.isAlive = false
-          voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`)
+        } else { // 如果是其他角色
+          eliminatedPlayer.isAlive = false;
+          playerKickedToday = eliminatedPlayer; // 记录下这个被票出局的玩家
+          voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`);
 
-          if (eliminatedPlayer.role === ROLES.HUNTER) { // 猎人被投出
-            this.gameState.status = 'hunter_shooting'
-            this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId
-            this.gameState.currentPhase = 'DAY' // 标记为白天阶段的开枪
-            return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true }
+          // 如果是猎人，直接返回，并带上死者信息
+          if (eliminatedPlayer.role === ROLES.HUNTER) {
+            this.gameState.status = 'hunter_shooting';
+            this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId;
+            this.gameState.currentPhase = 'DAY';
+            return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true, playerKicked: playerKickedToday };
           }
-          if (eliminatedPlayer.role === ROLES.WOLF_KING) { // 狼王被投出
-              this.gameState.status = 'wolf_king_clawing';
-              this.gameState.wolfKingNeedsToClaw = eliminatedPlayer.userId;
-              this.gameState.currentPhase = 'DAY'; // 标记为白天阶段的狼王技能
-              return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true };
+          // 如果是狼王，直接返回，并带上死者信息
+          if (eliminatedPlayer.role === ROLES.WOLF_KING) {
+            this.gameState.status = 'wolf_king_clawing';
+            this.gameState.wolfKingNeedsToClaw = eliminatedPlayer.userId;
+            this.gameState.currentPhase = 'DAY';
+            return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsWolfKingClaw: true, playerKicked: playerKickedToday };
           }
+        }
       }
+    } else if (tiedPlayers.length > 1) { // 平票
+      const sortedTiedPlayers = [...tiedPlayers].sort();
+      voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
+    } else { // 无人被投票或全部弃票
+      voteSummary.push("所有人都弃票或投票无效，本轮无人出局。");
     }
-  } else if (tiedPlayers.length > 1) { // 平票
-    const sortedTiedPlayers = [...tiedPlayers].sort();
-    voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
-  } else { // 无人被投票或全部弃票
-    voteSummary.push("所有人都弃票或投票无效，本轮无人出局。")
+
+    const gameStatus = this.checkGameStatus();
+    if (gameStatus.isEnd) {
+      this.endGame(gameStatus.winner);
+      return { 
+        success: true, summary: voteSummary.join('\n'), gameEnded: true, 
+        winner: gameStatus.winner, finalRoles: this.getFinalRoles(), playerKicked: playerKickedToday
+      };
+    } else {
+      this.gameState.status = 'night_phase_1';
+      return { 
+        success: true, summary: voteSummary.join('\n'), gameEnded: false, playerKicked: playerKickedToday 
+      };
+    }
   }
 
-  const gameStatus = this.checkGameStatus()
-  if (gameStatus.isEnd) {
-    this.endGame(gameStatus.winner)
-    return { success: true, summary: voteSummary.join('\n'), gameEnded: true, winner: gameStatus.winner, finalRoles: this.getFinalRoles() }
-  } else {
-    this.gameState.status = 'night_phase_1' // 进入夜晚第一阶段
-    return { success: true, summary: voteSummary.join('\n'), gameEnded: false }
-    }
-  }
   /**
    * 获取狼人袭击的最终目标ID。
    * @returns {string|null} 被袭击玩家的用户ID，如果没有则返回null。
@@ -1226,6 +1361,10 @@ export class WerewolfPlugin extends plugin {
         { reg: '^#?救\\s*(\\d+)$', fnc: 'handleNightAction', permission: 'private' },
         { reg: '^#?毒\\s*(\\d+)$', fnc: 'handleNightAction', permission: 'private' },
         { reg: '^#?守\\s*(\\d+)$', fnc: 'handleNightAction', permission: 'private' },
+        {reg: '^#上警$',fnc: 'handleSheriffSignup'},
+        {reg: '^#退水$', fnc: 'handleSheriffWithdraw'},
+        {reg: '^#投警长\\s*(\\d+)$', fnc: 'handleSheriffVote'},
+        {reg: '^#移交警徽\\s*(\\d+)$', fnc: 'handleSheriffPassBadge', permission: 'private'},
         { reg: '^#?(结束发言|过)$', fnc: 'handleEndSpeech' },
         { reg: '^#投票\\s*(\\d+|弃票)$', fnc: 'handleVote' },
         { reg: '^#开枪\\s*(\\d+)$', fnc: 'handleHunterShoot', permission: 'private' },
@@ -1243,6 +1382,9 @@ export class WerewolfPlugin extends plugin {
     // 游戏阶段持续时间常量
     this.WEREWOLF_PHASE_DURATION = 40 * 1000; // 狼人行动阶段时长
     this.WITCH_ACTION_DURATION = 30 * 1000;   // 女巫单独行动阶段时长
+    this.SHERIFF_SIGNUP_DURATION = 60 * 1000;   // 警长竞选报名时长
+    this.SHERIFF_SPEECH_DURATION = 60 * 1000;   // 警长竞选发言时长
+    this.SHERIFF_VOTE_DURATION = 45 * 1000;     // 警长竞选投票时长
     this.SPEECH_DURATION = 45 * 1000;         // 白天发言时长
     this.VOTE_DURATION = 60 * 1000;           // 投票阶段时长
     this.HUNTER_SHOOT_DURATION = 30 * 1000;   // 猎人开枪时长
@@ -1496,8 +1638,12 @@ export class WerewolfPlugin extends plugin {
         game.gameState.presetName = 'default'; // 更新游戏状态中的板子名称
     }
     
+    // 把板子配置中的胜利规则，设置到当前游戏实例上
     game.ruleset = preset.ruleset;
-    
+
+    // 把板子配置中的“是否有警长”，设置到游戏实例上
+    game.gameState.hasSheriff = preset.hasSheriff;
+
     // 根据板子或默认规则计算角色分配
     const distribution = preset.roles ? game.assignRolesFromPreset(preset) : game.calculateRoleDistribution();
 
@@ -1786,7 +1932,7 @@ export class WerewolfPlugin extends plugin {
       // 猎人开枪后，如果游戏未结束，应该回到白天继续发言/投票
       game.gameState.status = 'day_speak'; // 回到白天发言阶段
       await this.saveGameAll(gameInfo.groupId, game);
-      await this.transitionToNextPhase(gameInfo.groupId, game);
+      await this.continueAfterDeathEvent(gameInfo.groupId, game);
     }
   }
   
@@ -1869,7 +2015,7 @@ export class WerewolfPlugin extends plugin {
     } else {
         game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
         await this.saveGameAll(groupId, game);
-        await this.transitionToNextPhase(groupId, game);
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
     }
   }
 
@@ -1925,7 +2071,7 @@ export class WerewolfPlugin extends plugin {
       } else {
           game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
           await this.saveGameAll(groupId, game);
-          await this.transitionToNextPhase(groupId, game);
+          await this.transitionToNextPhase(groupId, game, 'night_phase_1');
       }
   }
 
@@ -2035,8 +2181,15 @@ export class WerewolfPlugin extends plugin {
                 summary += selfDestructMsg;
             }
 
+
+            const sheriffElected = dayPhaseEvents.find(e => e.type === 'SHERIFF_ELECTED');
+            if (sheriffElected) summary += `    - 经过竞选，${sheriffElected.actor} 当选为警长。\n`;
+
             const voteOut = dayPhaseEvents.find(e => e.type === 'VOTE_OUT');
             if (voteOut) summary += `    - 经过投票，${voteOut.target} 被放逐 (投票者: ${voteOut.voters.join(', ')})。\n`;
+
+            const badgePass = dayPhaseEvents.find(e => e.type === 'SHERIFF_PASS_BADGE');
+            if (badgePass) summary += `    - 死亡的警长 ${badgePass.actor} 将警徽移交给了 ${badgePass.target}。\n`;
 
             const dayHunterShoot = dayPhaseEvents.find(e => e.type === 'HUNTER_SHOOT');
             if (dayHunterShoot) summary += `    - 被放逐的猎人 ${dayHunterShoot.actor} 开枪带走了 ${dayHunterShoot.target}。\n`;
@@ -2239,80 +2392,456 @@ export class WerewolfPlugin extends plugin {
     await this.sendSystemGroupMsg(groupId, result.summary); // 公布夜晚摘要
 
     // 后续的逻辑（检查游戏是否结束、进入下一阶段）会基于这个已经保存的最新 game 状态进行判断
+    const deadSheriff = result.deadPlayers.find(p => p.userId === game.gameState.sheriffUserId);
+
     if (result.gameEnded) {
-      await this.endGameFlow(groupId, game, result.winner); // 游戏结束流程
+      await this.endGameFlow(groupId, game, result.winner);
+    } else if (deadSheriff) {
+      game.gameState.lastStableStatus = game.gameState.status;
+      await this.startSheriffPassBadgePhase(groupId, game, deadSheriff.userId);
     } else if (result.needsHunterShoot) {
-      await this.startHunterShootPhase(groupId, game); // 进入猎人开枪阶段
+      game.gameState.lastStableStatus = game.gameState.status;
+      await this.startHunterShootPhase(groupId, game);
     } else if (result.needsWolfKingClaw) {
-      await this.startWolfKingClawPhase(groupId, game); // 进入狼王技能阶段
+      await this.startWolfKingClawPhase(groupId, game);
     } else {
-      await this.transitionToNextPhase(groupId, game); // 转换到下一个阶段（白天发言）
+     if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
+        await this.startSheriffElectionPhase(groupId, game);
+      } else {
+        await this.transitionToNextPhase(groupId, game, 'day_speak');
+      }
     }
   }
   
   /**
+   * 处理 #上警 命令。
+   * @param {object} e - 消息事件对象。
+   * @returns {Promise<boolean>}
+   */
+  async handleSheriffSignup(e) {
+    // 1. 获取当前游戏实例
+    const gameInfo = await this.findUserActiveGame(e.user_id);
+    if (!gameInfo) return; // 如果玩家不在任何游戏中，则不作响应
+    const game = gameInfo.instance;
+    const groupId = gameInfo.groupId;
+
+    // 2. 验证游戏阶段
+    if (game.gameState.status !== 'sheriff_election_signup') {
+      return e.reply("当前不是竞选警长报名时间。");
+    }
+
+    // 3. 调用逻辑处理上警
+    const result = game.addSheriffCandidate(e.user_id);
+    
+    // 4. 根据处理结果，给玩家反馈
+    if (result.success) {
+      // 成功上警，私聊回复
+      await e.reply(result.message, true); // at发送者并回复
+      // 也可以考虑在群里发一个公告
+      await this.sendSystemGroupMsg(groupId, `${e.sender.card} (${result.player.tempId}号) 已上警！`);
+    } else {
+      // 如果上警失败（比如重复上警），则私聊回复他原因
+      return e.reply(result.message, true);
+    }
+
+    // 5. 保存游戏状态的变更
+    await this.saveGameAll(groupId, game);
+  }
+
+  /**
    * 处理发言超时。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
-   * @param {object} context - 包含发言人ID的上下文。
-   * @returns {Promise<void>}
    */
-  async processSpeechTimeout(groupId, game, context) {
-    // 检查1：游戏状态必须是发言阶段
-    if (!game || game.gameState.status !== 'day_speak') {
-        console.log(`[${PLUGIN_NAME}] [超时处理-废弃] 游戏(群:${groupId})状态已不是day_speak，忽略过期的发言超时。`);
+  async processSpeechTimeout(groupId, game) {
+    // 1. 检查是否是有效的发言阶段
+    const validStatuses = ['day_speak', 'sheriff_speech'];
+    if (!game || !validStatuses.includes(game.gameState.status)) {
         return;
     }
-    // 检查2：超时的发言人必须是当前记录的发言人，防止处理旧的超时事件
-    if (context?.speakerId && context.speakerId !== game.gameState.currentSpeakerUserId) {
-        console.log(`[${PLUGIN_NAME}] [超时处理-废弃] 游戏(群:${groupId})当前发言人已变更，忽略过期的发言超时。`);
-        return;
-    }
-
-    const timedOutSpeaker = game.players.find(p => p.userId === game.gameState.currentSpeakerUserId);
-    if (!timedOutSpeaker) return; // 如果找不到发言人，也可能是状态已经变更，直接返回
+    
+    const timedOutSpeaker = game.getPlayerInfo(game.gameState.currentSpeakerUserId);
+    if (!timedOutSpeaker) return;
 
     await this.sendSystemGroupMsg(groupId, `${timedOutSpeaker.nickname}(${timedOutSpeaker.tempId}号) 发言时间到。`);
     
     if (game.gameState.hasPermission) {
-        await this.mutePlayer(groupId, timedOutSpeaker.userId, 3600); // 重新禁言超时的玩家
+        await this.mutePlayer(groupId, timedOutSpeaker.userId, 3600);
     }
     
-    game.gameState.deadline = null; // 清理当前超时的deadline，防止重复触发
-    await this.saveGameField(groupId, game, 'gameState'); 
+    // 2. 移动到下一个发言人
+    const nextSpeakerUserId = game.moveToNextSpeaker();
 
-    const nextSpeakerUserId = game.moveToNextSpeaker(); // 移动到下一个发言人
-
+    // 3. 根据是否有下一个人，以及当前是什么阶段，决定下一步
     if (nextSpeakerUserId) {
-      await this.announceAndSetSpeechTimer(groupId, game); // 宣布并设置下一个发言人的计时器
+      // 只要有下一个人，就调用我们改造好的通用方法
+      await this.announceAndSetSpeechTimer(groupId, game);
     } else {
-      await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。")
-      await this.startVotingPhase(groupId, game); // 进入投票阶段
+      // 如果没有下一个发言人了
+      if (game.gameState.status === 'day_speak') {
+        await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
+        await this.startVotingPhase(groupId, game); // 白天发言结束 -> 进入公投
+      } else if (game.gameState.status === 'sheriff_speech') {
+        await this.sendSystemGroupMsg(groupId, "所有竞选者发言完毕，现在开始投票。");
+        await this.startSheriffVotePhase(groupId, game); // 警长发言结束 -> 进入警长投票
+      }
     }
+  }
+
+  /**
+   * 处理警长竞选报名阶段结束（超时）。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   * @returns {Promise<void>}
+   */
+  async processSheriffSignupEnd(groupId, game) {
+    const candidates = game.gameState.candidateList;
+
+    // 情况一：无人上警
+    if (candidates.length === 0) {
+      game.gameState.isSheriffElection = false; // 警长竞选流程结束
+      await this.sendSystemGroupMsg(groupId, "报名时间结束，无人竞选警长。本局游戏将没有警长。");
+      // 警长竞选失败，直接进入正常的白天发言阶段
+      game.gameState.status = 'day_speak';
+      await this.saveGameAll(groupId, game);
+      await this.transitionToNextPhase(groupId, game, 'day_speak');
+      return;
+    }
+
+    // 情况二：只有一人上警
+    if (candidates.length === 1) {
+      const newSheriffId = candidates[0];
+      game.gameState.sheriffUserId = newSheriffId; // 直接当选
+      game.gameState.isSheriffElection = false; // 警长竞选流程结束
+      
+      const sheriffInfo = game.getPlayerInfo(newSheriffId);
+      await this.sendSystemGroupMsg(groupId, `只有 ${sheriffInfo.nickname}(${sheriffInfo.tempId}号) 一人竞选，TA将自动当选为本局游戏的警长！`);
+
+      // 同样，直接进入正常的白天发言阶段
+      game.gameState.status = 'day_speak';
+      await this.saveGameAll(groupId, game);
+      await this.transitionToNextPhase(groupId, game, 'day_speak');
+      return;
+    }
+
+    // 情况三：有多人上警，进入竞选发言阶段
+    if (candidates.length > 1) {
+      // 我们将调用一个新的方法来开启竞选发言
+      await this.startSheriffSpeechPhase(groupId, game);
+    }
+  }
+
+    /**
+   * 开始警长竞选的发言阶段。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   */
+  async startSheriffSpeechPhase(groupId, game) {
+    // 1. 设置游戏状态为“警长发言”
+    game.gameState.status = 'sheriff_speech';
+    
+    // 2. 设置发言顺序
+    game.gameState.speakingOrder = [...game.gameState.candidateList];
+    game.gameState.currentSpeakerOrderIndex = -1;
+
+    // 3. 发布公告
+    const candidateInfos = game.gameState.speakingOrder.map(userId => 
+        `${game.getPlayerInfo(userId).nickname}(${game.getPlayerInfo(userId).tempId}号)`
+    ).join('、');
+    await this.sendSystemGroupMsg(groupId, `--- 警长竞选发言 ---\n上警玩家为：${candidateInfos}。\n现在将按照此顺序进行竞选发言。`);
+
+    // 4. 【关键】调用游戏核心逻辑，移动到第一个发言人
+    const firstSpeakerId = game.moveToNextSpeaker();
+
+    // 5. 调用你已有的“场务”方法，让第一个人开始发言
+    if (firstSpeakerId) {
+      await this.announceAndSetSpeechTimer(groupId, game);
+    } else {
+      // 如果意外地没有候选人，直接进入投票（虽然不太可能发生）
+      await this.sendSystemGroupMsg(groupId, "没有有效的竞选者可以发言。");
+      await this.startSheriffVotePhase(groupId, game);
+    }
+  }
+
+  /**
+   * 处理 #投警长 命令。
+   * @param {object} e - 消息事件对象。
+   * @returns {Promise<boolean>}
+   */
+  async handleSheriffVote(e) {
+    // 1. 获取游戏实例和玩家信息
+    const gameInfo = await this.findUserActiveGame(e.user_id);
+    if (!gameInfo) return;
+    const game = gameInfo.instance;
+    const groupId = gameInfo.groupId;
+    const voterId = e.user_id;
+
+    // 2. 验证游戏阶段
+    if (game.gameState.status !== 'sheriff_vote') {
+      return; // 不是警长投票时间，静默处理
+    }
+
+    // 3. 解析投票目标
+    const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0');
+    if (!targetTempId) {
+      return e.reply("指令格式错误，请发送 #投警长 编号", true);
+    }
+    
+    // 4. 调用逻辑来处理投票
+    const result = game.recordSheriffVote(voterId, targetTempId);
+
+    // 5. 根据结果给玩家反馈
+    if (result.success) {
+      await e.reply(`你已成功投票给 ${result.targetInfo.nickname}(${result.targetInfo.tempId}号)。`, true);
+    } else {
+      await e.reply(result.message, true); // 投票失败，告知原因
+    }
+
+    // 注意：这里我们不需要保存游戏状态，因为投票是临时的。
+    // 我们会在投票结束后，一次性处理和保存。
+  }
+
+  /**
+   * 记录一票警长投票。
+   * @param {string} voterId - 投票者的用户ID。
+   * @param {string} targetTempId - 投票目标的临时编号。
+   * @returns {object} 包含 success 和 message 的结果对象。
+   */
+  recordSheriffVote(voterId, targetTempId) {
+    const voter = this.getPlayerInfo(voterId);
+    if (!voter || !voter.isAlive) {
+      return { success: false, message: '你已出局或不在游戏中，无法投票。' };
+    }
+    
+    // 检查投票者是否是警长候选人（警上不能投票）
+    if (this.gameState.candidateList.includes(voterId)) {
+      return { success: false, message: '你是警长候选人，不能参与投票。' };
+    }
+
+    const target = this.players.find(p => p.tempId === targetTempId);
+    if (!target) {
+      return { success: false, message: '投票目标不存在。' };
+    }
+
+    // 检查投票目标是否是警长候选人
+    if (!this.gameState.candidateList.includes(target.userId)) {
+      return { success: false, message: '投票目标不是警长候选人。' };
+    }
+
+    // 记录投票
+    this.gameState.sheriffVotes[voterId] = target.userId;
+
+    return { 
+      success: true,
+      targetInfo: this.getPlayerInfo(target.userId) 
+    };
+  }
+
+  /**
+   * 处理警长投票阶段结束，进行计票和结算。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   * @returns {Promise<void>}
+   */
+  async processSheriffVoteEnd(groupId, game) {
+  if (!game || game.gameState.status !== 'sheriff_vote') return;
+
+  await this.sendSystemGroupMsg(groupId, "警长投票时间结束，正在计票...");
+
+  // 调用核心逻辑进行计票
+  const result = game.processSheriffVotes();
+
+  // 在群里公布计票结果
+  await this.sendSystemGroupMsg(groupId, result.summary);
+
+  // 根据计票结果，决定下一步
+  if (result.sheriffElected) {
+    // 【情况一】警长已诞生
+    game.gameState.isSheriffElection = false; // 警长竞选流程结束
+    const sheriffInfo = game.getPlayerInfo(result.sheriffId);
+    await this.sendSystemGroupMsg(groupId, `恭喜 ${sheriffInfo.nickname}(${sheriffInfo.tempId}号) 当选为本局警长！`);
+
+    game.gameState.eventLog.push({
+      day: game.gameState.currentDay,
+      phase: 'day',
+      type: 'SHERIFF_ELECTED',
+      actor: sheriffInfo
+    });
+    
+    // 警长诞生后，进入正常的白天发言阶段
+    await this.transitionToNextPhase(groupId, game, 'day_speak');
+
+  } else if (result.isTie) {
+    // 【情况二】出现平票，需要进行PK
+    await this.sendSystemGroupMsg(groupId, `出现平票！平票玩家将进入PK环节。`);
+    // PK环节就是让平票的玩家再进行一轮发言，然后警下玩家再投一次
+    // 为了简化，我们暂时先不实现复杂的PK逻辑，可以先视为流局
+    // TODO: 实现PK发言和第二轮投票
+    game.gameState.isSheriffElection = false;
+    await this.sendSystemGroupMsg(groupId, `（PK功能暂未实现）本轮警长竞选流局，本局游戏将没有警长。`);
+    await this.transitionToNextPhase(groupId, game, 'day_speak');
+    
+  } else {
+    // 【情况三】无人投票或所有票无效，视为流局
+    game.gameState.isSheriffElection = false;
+    await this.sendSystemGroupMsg(groupId, `无人投票，警长竞选流局，本局游戏将没有警长。`);
+    await this.transitionToNextPhase(groupId, game, 'day_speak');
+  }
   }
 
   /**
    * 宣布当前发言玩家并设置发言计时器。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
-   * @returns {Promise<void>}
    */
   async announceAndSetSpeechTimer(groupId, game) {
-    if (!game || game.gameState.status !== 'day_speak' || !game.gameState.currentSpeakerUserId) return
-    const speaker = game.players.find(p => p.userId === game.gameState.currentSpeakerUserId)
-    if (!speaker) return
+    // 1. 根据当前游戏状态，决定使用哪个时长常量
+    let currentPhaseDuration = 0;
+    if (game.gameState.status === 'day_speak') {
+      currentPhaseDuration = this.SPEECH_DURATION;
+    } else if (game.gameState.status === 'sheriff_speech') {
+      currentPhaseDuration = this.SHERIFF_SPEECH_DURATION;
+    } else {
+      return; // 如果不是任何发言阶段，则直接退出
+    }
 
-    game.gameState.deadline = Date.now() + this.SPEECH_DURATION // 设置发言截止时间
-    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]) // 添加到截止时间ZSET
-    await this.saveGameField(groupId, game, 'gameState')
+    const speakerId = game.gameState.currentSpeakerUserId;
+    if (!speakerId) return;
 
-    const msg = [segment.at(speaker.userId), ` 请开始发言 (${this.SPEECH_DURATION / 1000}秒)\n发送#结束发言或“过”以结束你的发言。`]
+    const speaker = game.getPlayerInfo(speakerId);
+    if (!speaker) return;
+
+    // 2. 使用动态获取的时长来设置deadline
+    game.gameState.deadline = Date.now() + currentPhaseDuration;
+    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
+    await this.saveGameField(groupId, game, 'gameState');
+
+    // 3. 准备公告信息
+    const msg = [
+        segment.at(speaker.userId), 
+        ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
+    ];
     
+    // 根据阶段添加不同的提示
+    if (game.gameState.status === 'day_speak') {
+        msg.push('发送#结束发言或“过”以结束你的发言。');
+    } else if (game.gameState.status === 'sheriff_speech') {
+        msg.push('你可以随时发送【#退水】来退出竞选。');
+    }
+    
+    // 4. 解禁操作
     if (game.gameState.hasPermission) {
         await this.mutePlayer(groupId, speaker.userId, 0); // 解禁当前发言者
     }
     
-    await this.sendSystemGroupMsg(groupId, msg)
+    await this.sendSystemGroupMsg(groupId, msg);
+  }
+
+  /**
+   * 处理 #退水 命令。
+   * @param {object} e - 消息事件对象。
+   * @returns {Promise<boolean>}
+   */
+  async handleSheriffWithdraw(e) {
+    const gameInfo = await this.findUserActiveGame(e.user_id);
+    if (!gameInfo) return;
+    const game = gameInfo.instance;
+    const groupId = gameInfo.groupId;
+    const userId = e.user_id;
+
+    // 验证游戏阶段：只有在警长发言或准备投票时才能退水
+    const validStatuses = ['sheriff_speech', 'sheriff_vote'];
+    if (!validStatuses.includes(game.gameState.status)) {
+      return; // 不是退水时间，不作响应
+    }
+
+    // 调用核心逻辑处理退水
+    const result = game.withdrawFromSheriffElection(userId);
+    
+    if (result.success) {
+      // 在群里公告谁退水了
+      const playerInfo = game.getPlayerInfo(userId);
+      await this.sendSystemGroupMsg(groupId, `${playerInfo.nickname}(${playerInfo.tempId}号) 已退水，不再参与警长竞选。`);
+      
+      // 检查退水后是否只剩一人，如果只剩一人，他自动当选
+      if (result.remainingCandidates === 1) {
+          const winnerId = game.gameState.candidateList[0];
+          const winnerInfo = game.getPlayerInfo(winnerId);
+          game.gameState.sheriffUserId = winnerId; // 直接当选
+          game.gameState.isSheriffElection = false;
+
+          await this.sendSystemGroupMsg(groupId, `场上只剩一名候选人，${winnerInfo.nickname}(${winnerInfo.tempId}号) 自动当选为警长！`);
+          // 竞选结束，直接进入白天发言
+          await this.transitionToNextPhase(groupId, game, 'day_speak');
+      }
+      
+      await this.saveGameAll(groupId, game);
+    } else {
+      // 失败则私聊回复
+      await e.reply(result.message, true);
+    }
+  }
+
+  /**
+   * 开始警徽移交阶段。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   * @param {string} deadSheriffId - 死亡警长的用户ID。
+   */
+  async startSheriffPassBadgePhase(groupId, game, deadSheriffId) {
+    game.gameState.status = 'sheriff_pass_badge';
+    
+    const duration = 60 * 1000; // 60秒移交时间
+    game.gameState.deadline = Date.now() + duration;
+    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
+    await this.saveGameAll(groupId, game);
+
+    const announcement = `警长倒牌！请警长在 ${duration/1000} 秒内私聊我【#移交警徽 编号】来选择新的警长。\n超时或移交给非存活玩家，警徽将会被撕毁。`;
+    // 这个消息需要同时发给群里和私聊给死去的警长
+    await this.sendSystemGroupMsg(groupId, announcement);
+    await this.sendDirectMessage(deadSheriffId, announcement, groupId);
+  }
+
+  /**
+   * 处理 #移交警徽 命令。
+   * @param {object} e - 消息事件对象。
+   */
+  async handleSheriffPassBadge(e) {
+    const gameInfo = await this.findUserActiveGame(e.user_id);
+    if (!gameInfo) return;
+    const game = gameInfo.instance;
+    const groupId = gameInfo.groupId;
+
+    // 验证：必须是警徽移交阶段，且操作者必须是刚刚死去的那个警长
+    if (game.gameState.status !== 'sheriff_pass_badge' || e.user_id !== game.gameState.sheriffUserId) {
+      return;
+    }
+
+    const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0');
+    if (!targetTempId) return e.reply("指令格式错误，请发送 #移交警徽 编号", true);
+
+    const targetPlayer = game.players.find(p => p.tempId === targetTempId && p.isAlive);
+    if (!targetPlayer) {
+      return e.reply("移交目标不存在或已出局，请重新选择。", true);
+    }
+    
+    // 更新警长
+    game.gameState.sheriffUserId = targetPlayer.userId;
+    const oldSheriffInfo = game.getPlayerInfo(e.user_id);
+    const newSheriffInfo = game.getPlayerInfo(targetPlayer.userId);
+
+    await this.sendSystemGroupMsg(groupId, `${oldSheriffInfo.nickname} 将警徽移交给了 ${newSheriffInfo.nickname}(${newSheriffInfo.tempId}号)！`);
+    
+    game.gameState.eventLog.push({
+      day: game.gameState.currentDay,
+      phase: 'day', // 移交通常发生在白天死亡后
+      type: 'SHERIFF_PASS_BADGE',
+      actor: oldSheriffInfo,
+      target: newSheriffInfo
+    });
+    
+    // 警徽移交完毕，流程继续
+    await this.continueAfterDeathEvent(groupId, game);
   }
 
   /**
@@ -2418,14 +2947,22 @@ async processVoteEnd(groupId, game) {
   await this.saveGameAll(groupId, game) // 保存最新游戏状态
   await this.sendSystemGroupMsg(groupId, result.summary) // 公布投票摘要
 
+  const playerKicked = result.playerKicked; // 假设 result 中有这个被票出局的玩家对象
+
   if (result.gameEnded) {
-    await this.endGameFlow(groupId, game, result.winner) // 游戏结束流程
+    await this.endGameFlow(groupId, game, result.winner);
+  } else if (playerKicked && playerKicked.userId === game.gameState.sheriffUserId) {
+    // 如果被票出去的是警长，优先处理警徽移交
+    game.gameState.lastStableStatus = game.gameState.status;
+    await this.startSheriffPassBadgePhase(groupId, game, playerKicked.userId);
   } else if (result.needsHunterShoot) {
-    await this.startHunterShootPhase(groupId, game) // 进入猎人开枪阶段
+    game.gameState.lastStableStatus = game.gameState.status;
+    await this.startHunterShootPhase(groupId, game);
   } else if (result.needsWolfKingClaw) {
-    await this.startWolfKingClawPhase(groupId, game); // 进入狼王技能阶段
+    await this.startWolfKingClawPhase(groupId, game);
   } else {
-    await this.transitionToNextPhase(groupId, game) // 转换到下一个阶段（夜晚）
+    // 如果没有其他特殊事件，就进入夜晚
+    await this.transitionToNextPhase(groupId, game, 'night_phase_1');
   }
  }
 
@@ -2469,7 +3006,7 @@ async processVoteEnd(groupId, game) {
     } else {
         game.gameState.status = 'day_speak'; // 回到白天发言阶段
         await this.saveGameAll(groupId, game)
-        await this.transitionToNextPhase(groupId, game)
+        await this.transitionToNextPhase(groupId, game, 'day_speak')
     }
   }
 
@@ -2527,7 +3064,7 @@ async processVoteEnd(groupId, game) {
       } else {
           game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
           await this.saveGameAll(groupId, game);
-          await this.transitionToNextPhase(groupId, game);
+          await this.transitionToNextPhase(groupId, game, 'night_phase_1');
       }
   }
 
@@ -2535,16 +3072,86 @@ async processVoteEnd(groupId, game) {
    * 转换到下一个游戏阶段。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
+   * @param {string} nextStatus - 明确指定要进入的下一个状态。
    * @returns {Promise<void>}
    */
-  async transitionToNextPhase(groupId, game) {
-    if (!game || game.gameState.status === 'ended') return
-    const nextStatus = game.gameState.status
-    console.log(`[${PLUGIN_NAME}] 状态转换 -> ${nextStatus} (群: ${groupId})`)
+  async transitionToNextPhase(groupId, game, nextStatus) { // <-- 增加一个参数
+    if (!game || !nextStatus || game.gameState.status === 'ended') return;
+
+    console.log(`[${PLUGIN_NAME}] 状态转换: ${game.gameState.status} -> ${nextStatus} (群: ${groupId})`);
+    
+    // 直接更新游戏状态
+    game.gameState.status = nextStatus;
+    
+    // 根据要进入的下一个状态，调用对应的开始方法
     switch (nextStatus) {
-      case 'night_phase_1': await this.startNightPhase(groupId, game); break
-      case 'day_speak': await this.startDayPhase(groupId, game); break
-      default: console.warn(`[${PLUGIN_NAME}] 未知或非自动转换状态: ${nextStatus} (群: ${groupId})`)
+      case 'night_phase_1':
+        await this.startNightPhase(groupId, game);
+        break;
+      case 'day_speak':
+        await this.startDayPhase(groupId, game);
+        break;
+      case 'day_vote':
+        await this.startVotingPhase(groupId, game);
+        break;
+      
+      // 把警长流程也加进来，虽然它们不是被这样调用的
+      case 'sheriff_election_signup':
+        await this.startSheriffElectionPhase(groupId, game);
+        break;
+      case 'sheriff_speech':
+        await this.startSheriffSpeechPhase(groupId, game);
+        break;
+      case 'sheriff_vote':
+        await this.startSheriffVotePhase(groupId, game);
+        break;
+        
+      default:
+        console.warn(`[${PLUGIN_NAME}] 未知或非自动转换状态: ${nextStatus}`);
+    }
+  }
+
+  /**
+   * 在死亡相关事件（猎人开枪、警徽移交等）处理完毕后，继续游戏流程。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   */
+  async continueAfterDeathEvent(groupId, game) {
+    // 1. 清理可能存在的计时器和deadline
+    this.clearPhaseTimer(groupId);
+    game.gameState.deadline = null;
+    await redis.zRem(DEADLINE_KEY, String(groupId));
+
+    // 2. 检查游戏是否结束
+    const gameStatus = game.checkGameStatus();
+    if (gameStatus.isEnd) {
+      // 如果游戏结束，则直接走结束流程
+      await this.endGameFlow(groupId, game, gameStatus.winner);
+      return;
+    }
+    // 3. 如果游戏没结束，判断下一步该去哪
+    let nextStatus = '';
+    switch (game.gameState.lastStableStatus) {
+      case 'night_phase_2':
+        // 晚上死人，下一步是白天
+        // 但我们还要考虑第一天警长竞选的情况
+       if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
+          await this.startSheriffElectionPhase(groupId, game);
+        } else {
+          await this.transitionToNextPhase(groupId, game, 'day_speak');
+        }
+        break;
+      
+      case 'day_vote':
+        // 白天死人，下一步是夜晚
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+        break;
+        
+      default:
+        // 如果没有上一个状态记录（作为保险），默认进入夜晚
+        console.warn(`[${PLUGIN_NAME}] 无法确定上一个稳定状态，默认进入夜晚。`);
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+        break;
     }
   }
 
@@ -2608,7 +3215,24 @@ async processVoteEnd(groupId, game) {
           case 'night_phase_2':
               await this.processNightEnd(groupId, game); // 女巫阶段超时，进行夜晚最终结算
               break;
-          case 'day_speak': await this.processSpeechTimeout(groupId, game, { speakerId: game.gameState.currentSpeakerUserId }); break
+          case 'sheriff_election_signup':
+              await this.processSheriffSignupEnd(groupId, game);
+              break;
+          case 'day_speak':
+          case 'sheriff_speech':
+              await this.processSpeechTimeout(groupId, game); // 直接调用，不再传递第二个参数
+              break;
+          case 'sheriff_vote':
+              await this.processSheriffVoteEnd(groupId, game);
+              break;
+          case 'sheriff_pass_badge':
+              // 如果超时，视为撕毁警徽
+              await this.sendSystemGroupMsg(groupId, "警长移交警徽超时，警徽被撕毁！");
+              game.gameState.sheriffUserId = null; // 警徽没了
+              await this.saveGameAll(groupId, game);
+              // 调用收尾方法继续流程
+              await this.continueAfterDeathEvent(groupId, game);
+          break;
           case 'day_vote': await this.processVoteEnd(groupId, game); break
           case 'hunter_shooting': await this.processHunterShootEnd(groupId, game); break
           case 'wolf_king_clawing': await this.processWolfKingClawEnd(groupId, game); break
