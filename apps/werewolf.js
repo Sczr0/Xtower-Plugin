@@ -2379,6 +2379,8 @@ export class WerewolfPlugin extends plugin {
     // 结算夜晚行动。这个方法会修改 game 实例内部的 players 数组 (例如添加 DYING 标签)
     const result = game.processNightActions();
 
+    game.gameState.recentlyDeceased = result.deadPlayers || []; // 记录最近死亡玩家
+
     await this.saveGameAll(groupId, game); // 保存最新游戏状态到Redis，并更新内存缓存
 
     await this.sendSystemGroupMsg(groupId, result.summary); // 公布夜晚摘要
@@ -2843,21 +2845,59 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<void>}
    */
   async startDayPhase(groupId, game) {
-    if (!game) return
-    game.gameState.status = 'day_speak'
-    await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentDay} 天 - 白天 ---`)
+    if (!game) return;
+    game.gameState.status = 'day_speak';
 
-    const speechOrder = game.players.filter(p => p.isAlive).map(p => p.userId) // 获取存活玩家作为发言顺序
-    game.gameState.speakingOrder = speechOrder
-    game.gameState.currentSpeakerOrderIndex = -1 // 重置发言索引
+    // 判断是从投票阶段过来的还是从夜晚阶段过来的
+    const cameFromVote = game.gameState.lastStableStatus === 'day_vote';
 
-    const nextSpeakerId = game.moveToNextSpeaker() // 获取第一个发言人
+    // --- 构建发言顺序 ---
+    let speechOrder = [];
+    const deceasedPlayers = game.gameState.recentlyDeceased || [];
+
+    // 判断是否需要留遗言
+    // 条件：第一天晚上死的，或者白天被投票出局的
+    const isFirstNightDeath = game.gameState.currentDay === 1 && game.gameState.lastStableStatus === 'night_phase_2';
+
+    if (deceasedPlayers.length > 0 && (isFirstNightDeath || cameFromVote)) {
+        const lastWordsPlayers = deceasedPlayers.map(p => p.userId);
+        speechOrder.push(...lastWordsPlayers); // 让死者先发言
+        
+        // 准备一个简单的遗言通知
+        const announcementParts = lastWordsPlayers.map(userId => {
+            const playerInfo = game.getPlayerByUserId(userId);
+            return playerInfo ? `${playerInfo.number}号玩家` : "一位玩家";
+        });
+        await this.sendSystemGroupMsg(groupId, `现在是 ${announcementParts.join('、')} 发表遗言时间。`);
+    }
+
+    // 只有在不是从投票阶段过来的时候，才安排活人发言
+    if (!cameFromVote) {
+        const alivePlayers = game.players.filter(p => p.isAlive).map(p => p.userId);
+        speechOrder.push(...alivePlayers);
+    }
+    
+    // 清理本次死亡记录，防止后续流程错误引用
+    game.gameState.recentlyDeceased = [];
+
+    // --- 开始发言流程 ---
+    game.gameState.speakingOrder = speechOrder;
+    game.gameState.currentSpeakerOrderIndex = -1; 
+    const nextSpeakerId = game.moveToNextSpeaker();
 
     if (nextSpeakerId) {
-      await this.announceAndSetSpeechTimer(groupId, game) // 宣布并设置下一个发言人的计时器
+      // 只有在真的有人要发言时，才宣布并设置计时器
+      await this.announceAndSetSpeechTimer(groupId, game);
     } else {
-      await this.sendSystemGroupMsg(groupId, "没有存活玩家可以发言，直接进入投票。")
-      await this.startVotingPhase(groupId, game) // 直接进入投票阶段
+      // 如果没有人可以发言（例如，投票出局者发表完遗言后，流程就该结束了）
+      if (cameFromVote) {
+        await this.sendSystemGroupMsg(groupId, "遗言发表结束，天黑请闭眼。");
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      } else {
+        // 正常白天没人可发言（例如所有人都死了），就直接进入投票（虽然不太可能）
+        await this.sendSystemGroupMsg(groupId, "所有玩家发言结束，现在开始投票。");
+        await this.startVotingPhase(groupId, game);
+      }
     }
   }
 
@@ -2930,6 +2970,12 @@ export class WerewolfPlugin extends plugin {
 
     const result = game.processVotes() // 结算投票
 
+    if (result.playerKicked) {
+      game.gameState.recentlyDeceased = [result.playerKicked];
+    } else {
+      game.gameState.recentlyDeceased = [];
+    }
+
     // 如果白痴翻牌，需要额外保存玩家数据
     if (result.idiotRevealed) {
       await this.saveGameField(groupId, game, 'players'); // 保存玩家状态（包括白痴标签）
@@ -2939,7 +2985,7 @@ export class WerewolfPlugin extends plugin {
     await this.saveGameAll(groupId, game) // 保存最新游戏状态
     await this.sendSystemGroupMsg(groupId, result.summary) // 公布投票摘要
 
-    const playerKicked = result.playerKicked; // 假设 result 中有这个被票出局的玩家对象
+    const playerKicked = result.playerKicked;
 
     if (result.gameEnded) {
       await this.endGameFlow(groupId, game, result.winner);
@@ -3135,8 +3181,8 @@ export class WerewolfPlugin extends plugin {
         break;
 
       case 'day_vote':
-        // 白天死人，下一步是夜晚
-        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+        // 白天死人，放逐遗言
+        await this.transitionToNextPhase(groupId, game, 'day_speak');
         break;
 
       default:
