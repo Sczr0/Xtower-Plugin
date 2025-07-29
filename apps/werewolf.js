@@ -1272,7 +1272,7 @@ class WerewolfGame {
       }
     } else { // 默认使用屠城规则
       // 存活的狼人数量大于或等于存活的好人数量。
-      if (aliveWerewolves >= aliveGoodGuys) {
+      if (aliveGoodGuys === 0) {
         return { isEnd: true, winner: '狼人' };
       }
     }
@@ -2725,7 +2725,7 @@ export class WerewolfPlugin extends plugin {
     // 4. 解禁操作
     if (game.gameState.hasPermission) {
       // 在单独解禁前，先禁言所有活着的玩家
-      await this.muteAllPlayers(groupId, game); 
+      await this.muteAllPlayers(groupId, game);
       await this.mutePlayer(groupId, speaker.userId, 0); // 解禁当前发言者
     }
 
@@ -2865,29 +2865,29 @@ export class WerewolfPlugin extends plugin {
     const isFirstNightDeath = game.gameState.currentDay === 1 && game.gameState.lastStableStatus === 'night_phase_2';
 
     if (deceasedPlayers.length > 0 && (isFirstNightDeath || cameFromVote)) {
-        const lastWordsPlayers = deceasedPlayers.map(p => p.userId).filter(id => id);
-        speechOrder.push(...lastWordsPlayers); // 让死者先发言
-        
-        // 准备一个简单的遗言通知
-        const announcementParts = lastWordsPlayers.map(userId => {
-            const playerInfo = game.getPlayerByUserId(userId);
-            return playerInfo ? `${playerInfo.number}号玩家` : "一位玩家";
-        });
-        await this.sendSystemGroupMsg(groupId, `现在是 ${announcementParts.join('、')} 发表遗言时间。`);
+      const lastWordsPlayers = deceasedPlayers.map(p => p.userId).filter(id => id);
+      speechOrder.push(...lastWordsPlayers); // 让死者先发言
+
+      // 准备一个简单的遗言通知
+      const announcementParts = lastWordsPlayers.map(userId => {
+        const playerInfo = game.getPlayerByUserId(userId);
+        return playerInfo ? `${playerInfo.number}号玩家` : "一位玩家";
+      });
+      await this.sendSystemGroupMsg(groupId, `现在是 ${announcementParts.join('、')} 发表遗言时间。`);
     }
 
     // 只有在不是从投票阶段过来的时候，才安排活人发言
     if (!cameFromVote) {
-        const alivePlayers = game.players.filter(p => p.isAlive).map(p => p.userId);
-        speechOrder.push(...alivePlayers);
+      const alivePlayers = game.players.filter(p => p.isAlive).map(p => p.userId);
+      speechOrder.push(...alivePlayers);
     }
-    
+
     // 清理本次死亡记录，防止后续流程错误引用
     game.gameState.recentlyDeceased = [];
 
     // --- 开始发言流程 ---
     game.gameState.speakingOrder = speechOrder;
-    game.gameState.currentSpeakerOrderIndex = -1; 
+    game.gameState.currentSpeakerOrderIndex = -1;
     const nextSpeakerId = game.moveToNextSpeaker();
 
     if (nextSpeakerId) {
