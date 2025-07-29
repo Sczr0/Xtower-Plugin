@@ -890,7 +890,6 @@ class WerewolfGame {
         deadPlayers: actualDeaths
       };
     } else {
-      this.gameState.status = 'day_speak';
       return {
         success: true,
         summary: finalSummary.join('\n'),
