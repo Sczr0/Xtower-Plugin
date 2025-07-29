@@ -1309,6 +1309,15 @@ class WerewolfGame {
   }
 
   /**
+   * 根据用户ID或临时ID获取完整的玩家对象。
+   * @param {string} userIdOrTempId - 玩家的用户ID或临时ID。
+   * @returns {object | undefined} 找到的玩家对象，如果未找到则返回undefined。
+   */
+  getPlayerObject(userIdOrTempId) {
+    return this.players.find(p => p.userId === userIdOrTempId || p.tempId === userIdOrTempId);
+  }
+
+  /**
    * 获取当前存活玩家的列表。
    * @returns {string} 格式化后的存活玩家列表字符串。
    */
@@ -2099,6 +2108,8 @@ export class WerewolfPlugin extends plugin {
       console.log(`[${PLUGIN_NAME}] [DEBUG] forceEndGame - Game was in status ${game.gameState.status}, skipping summary/roles.`);
     }
 
+    await this.unmuteAllPlayers(groupId, game); // 解除所有玩家禁言
+
     await this.deleteGame(groupId) // 删除游戏数据
     return true
   }
@@ -2701,7 +2712,7 @@ export class WerewolfPlugin extends plugin {
     const speakerId = game.gameState.currentSpeakerUserId;
     if (!speakerId) return;
 
-    const speaker = game.getPlayerInfo(speakerId);
+    const speaker = game.getPlayerObject(speakerId);
     if (!speaker) return;
 
     // 2. 使用动态获取的时长来设置deadline
