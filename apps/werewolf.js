@@ -2709,12 +2709,12 @@ export class WerewolfPlugin extends plugin {
 
     } else if (result.isTie) {
       // 【情况二】出现平票，需要进行PK
-      await this.sendSystemGroupMsg(groupId, `出现平票！平票玩家将进入PK环节。`);
+      await this.sendSystemGroupMsg(groupId, `出现平票！`);
       // PK环节就是让平票的玩家再进行一轮发言，然后警下玩家再投一次
       // 为了简化，我们暂时先不实现复杂的PK逻辑，可以先视为流局
       // TODO: 实现PK发言和第二轮投票
       game.gameState.isSheriffElection = false;
-      await this.sendSystemGroupMsg(groupId, `（PK功能暂未实现）本轮警长竞选流局，本局游戏将没有警长。`);
+      await this.sendSystemGroupMsg(groupId, `本轮警长竞选流局，本局游戏将没有警长。`);
       await this.transitionToNextPhase(groupId, game, 'day_speak');
 
     } else {
@@ -2729,6 +2729,7 @@ export class WerewolfPlugin extends plugin {
    * 宣布当前发言玩家并设置发言计时器。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
+   * @param {object} e - 可选的消息事件对象。
    */
   async announceAndSetSpeechTimer(groupId, game, e) {
     // 1. 根据当前游戏状态，决定使用哪个时长常量
@@ -2758,7 +2759,7 @@ export class WerewolfPlugin extends plugin {
     if (speaker.isAlive) {
       // 分支一：如果玩家是活着的，就@他进行正常发言
       msg = [
-        e.bot.segment.at(speaker.userId),
+        segment.at(speaker.userId),
         ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
       ];
     } else {
