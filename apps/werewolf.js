@@ -1724,6 +1724,14 @@ export class WerewolfPlugin extends plugin {
     const actionPlayer = game.players.find(p => p.userId === userId);
     if (!actionPlayer || actionPlayer.role !== role) return e.reply('你的身份不符。');
 
+    // 检查玩家今晚是否已经行动过 (狼人除外，因为狼人可以改票)
+    if (role !== ROLES.WEREWOLF) {
+      const hasActed = game.gameState.pendingNightActions.some(action => action.userId === userId);
+      if (hasActed) {
+        return e.reply('你本回合已经行动过了。');
+      }
+    }
+
     // 调用 recordNightAction，它内部会负责验证和 push 到 pendingNightActions
     const result = game.recordNightAction(role, userId, { type, targetTempId });
 
@@ -2341,8 +2349,17 @@ export class WerewolfPlugin extends plugin {
 
     // 将狼人的"待处理"行动转移到"最终决定"
     // 注意：这里我们只转移狼人的行动，其他行动暂时不动
-    if (game.gameState.pendingNightActions['WEREWOLF']) {
-      game.gameState.nightActions['WEREWOLF'] = game.gameState.pendingNightActions['WEREWOLF'];
+    const werewolfActions = game.gameState.pendingNightActions.filter(
+      action => action.role === 'WEREWOLF'
+    );
+    if (werewolfActions.length > 0) {
+      if (!game.gameState.nightActions['WEREWOLF']) {
+        game.gameState.nightActions['WEREWOLF'] = {};
+      }
+      // 将所有狼人行动记录下来
+      werewolfActions.forEach(action => {
+        game.gameState.nightActions['WEREWOLF'][action.userId] = action.action;
+      });
     }
 
     const attackTargetId = game.getWerewolfAttackTargetId();
