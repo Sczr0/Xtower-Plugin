@@ -2375,7 +2375,13 @@ export class WerewolfPlugin extends plugin {
 
     let witchPrompt = `女巫请行动。\n`;
     if (attackTargetId) {
-      witchPrompt += `昨晚 ${game.getPlayerInfo(attackTargetId)} 被袭击了。\n`;
+      const targetPlayer = game.getPlayerObject(attackTargetId);
+      if (targetPlayer) {
+        witchPrompt += `昨晚 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 被袭击了。\n`;
+      } else {
+        // 作为保险，如果万一还是没找到，就用回原来的方式
+        witchPrompt += `昨晚 未知玩家 被袭击了。\n`;
+      }
     } else {
       witchPrompt += `昨晚无人被袭击（狼人未行动或平票未统一）。\n`;
     }
@@ -2886,6 +2892,11 @@ export class WerewolfPlugin extends plugin {
    */
   async startDayPhase(groupId, game) {
     if (!game) return;
+
+    console.log('--- [调试信息] 进入startDayPhase，开始检查玩家花名册 game.players ---');
+    console.log(JSON.stringify(game.players, null, 2));
+    console.log('--- [调试信息] 玩家花名册检查结束 ---');
+
     game.gameState.status = 'day_speak';
 
     // 判断是从投票阶段过来的还是从夜晚阶段过来的
