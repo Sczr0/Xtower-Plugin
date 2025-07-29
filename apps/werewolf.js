@@ -1829,10 +1829,10 @@ export class WerewolfPlugin extends plugin {
 
     const nextSpeakerUserId = game.moveToNextSpeaker(); // 移动到下一个发言人
     if (nextSpeakerUserId) {
-      await this.announceAndSetSpeechTimer(groupId, game); // 宣布并设置下一个发言人的计时器
+      await this.announceAndSetSpeechTimer(groupId, game, e); // 宣布并设置下一个发言人的计时器
     } else {
       await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
-      await this.startVotingPhase(groupId, game); // 进入投票阶段
+      await this.startVotingPhase(groupId, game, e); // 进入投票阶段
     }
   }
 
@@ -1914,9 +1914,18 @@ export class WerewolfPlugin extends plugin {
     game.gameState.deadline = null; // 清除猎人开枪计时器对应的 deadline
     await redis.zRem(DEADLINE_KEY, String(gameInfo.groupId)); // 从ZSET中移除
 
+    // 将死亡玩家登记到“近期死亡”名单
     const targetPlayer = game.players.find(p => p.tempId === targetTempId);
     if (targetPlayer) targetPlayer.isAlive = false; // 被带走的玩家死亡
     if (hunterPlayer) hunterPlayer.isAlive = false; // 猎人死亡
+
+    game.gameState.recentlyDeceased = []; // 先清空，确保只处理本次开枪事件的死者
+    if (hunterPlayer) {
+      game.gameState.recentlyDeceased.push({ userId: hunterPlayer.userId, role: hunterPlayer.role });
+    }
+    if (targetPlayer) {
+      game.gameState.recentlyDeceased.push({ userId: targetPlayer.userId, role: targetPlayer.role });
+    }
 
     const hunterInfo = game.getPlayerInfo(userId);
     const targetInfo = game.getPlayerInfo(targetPlayer.userId);
@@ -2721,7 +2730,7 @@ export class WerewolfPlugin extends plugin {
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
    */
-  async announceAndSetSpeechTimer(groupId, game) {
+  async announceAndSetSpeechTimer(groupId, game, e) {
     // 1. 根据当前游戏状态，决定使用哪个时长常量
     let currentPhaseDuration = 0;
     if (game.gameState.status === 'day_speak') {
@@ -2749,7 +2758,7 @@ export class WerewolfPlugin extends plugin {
     if (speaker.isAlive) {
       // 分支一：如果玩家是活着的，就@他进行正常发言
       msg = [
-        Bot.segment.at(speaker.userId),
+        e.bot.segment.at(speaker.userId),
         ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
       ];
     } else {
@@ -2955,7 +2964,7 @@ export class WerewolfPlugin extends plugin {
    * @param {WerewolfGame} game - 游戏实例。
    * @returns {Promise<void>}
    */
-  async startVotingPhase(groupId, game) {
+  async startVotingPhase(groupId, game, e) {
     game.gameState.status = 'day_vote'
     game.gameState.deadline = Date.now() + this.VOTE_DURATION // 设置投票截止时间
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]) // 添加到截止时间ZSET
@@ -2989,11 +2998,11 @@ export class WerewolfPlugin extends plugin {
 
         if (unvotedPlayers.length > 0) {
           let reminderMsg = [
-            Bot.segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
+            e.bot.segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
           ];
           unvotedPlayers.forEach(p => {
-            reminderMsg.push(Bot.segment.at(p.userId));
-            reminderMsg.push(Bot.segment.text(' '));
+            reminderMsg.push(e.bot.segment.at(p.userId));
+            reminderMsg.push(e.bot.segment.text(' '));
           });
           await this.sendSystemGroupMsg(groupId, reminderMsg);
         }
