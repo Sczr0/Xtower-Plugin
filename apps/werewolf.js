@@ -1678,7 +1678,6 @@ export class WerewolfPlugin extends plugin {
    */
   async handleNightAction(e) {
     const userId = e.user_id;
-    console.log(`[${PLUGIN_NAME}] [DEBUG] handleNightAction - Entry: user_id=${userId}, message=${e.msg}`);
 
     const gameInfo = await this.findUserActiveGame(userId);
     if (!gameInfo) {
@@ -1694,8 +1693,6 @@ export class WerewolfPlugin extends plugin {
     if (!player) {
       return;
     }
-
-    console.log(`[${PLUGIN_NAME}] [DEBUG] handleNightAction - Player: ${player.nickname}(${player.tempId}), Role: ${player.role}`);
 
     const actionMap = {
       '杀': { role: ROLES.WEREWOLF, type: 'kill' },
@@ -1736,9 +1733,45 @@ export class WerewolfPlugin extends plugin {
     const result = game.recordNightAction(role, userId, { type, targetTempId });
 
     if (result.success) {
-      // 成功后，只保存 gameState 字段即可，因为 pendingNightActions 在里面
       await this.saveGameField(groupId, game, 'gameState');
-      e.reply(result.message);
+
+      // 如果是狼人执行指令，则特殊处理反馈
+      if (role === ROLES.WEREWOLF && type === 'kill') {
+        // 1. 获取所有存活的狼人
+        const livingWerewolves = game.players.filter(p => p.role === ROLES.WEREWOLF && p.isAlive);
+
+        // 2. 获取所有狼人的杀人投票记录
+        const werewolfKillActions = game.gameState.pendingNightActions.filter(action => {
+          const actor = game.players.find(p => p.userId === action.userId);
+          return actor && actor.role === ROLES.WEREWOLF && action.type === 'kill';
+        });
+
+        // 3. 构建票型信息字符串
+        let voteStatusMsg = "======= 狼人频道 =======\n当前刀人情况：\n";
+        livingWerewolves.forEach(wolf => {
+          const vote = werewolfKillActions.find(v => v.userId === wolf.userId);
+          if (vote) {
+            const targetPlayer = game.players.find(p => p.tempId === vote.targetTempId);
+            const targetDesc = targetPlayer ? `${targetPlayer.nickname}(${targetPlayer.tempId}号)` : `一个不存在的目标(${vote.targetTempId}号)`;
+            voteStatusMsg += `【${wolf.nickname}】投给了 ➽ ${targetDesc}\n`;
+          } else {
+            voteStatusMsg += `【${wolf.nickname}】尚未投票\n`;
+          }
+        });
+        voteStatusMsg += "========================";
+
+        // 4. 将票型信息私聊发送给所有存活的狼人
+        for (const wolf of livingWerewolves) {
+          // 使用 e.bot.sendPrivateMsg 方法发送私聊
+          e.bot.sendPrivateMsg(wolf.userId, voteStatusMsg).catch(err => {
+            console.error(`[WerewolfPlugin] 发送私聊消息给 ${wolf.userId} 失败:`, err);
+          });
+        }
+      } else {
+        // 其他角色的成功提示
+        e.reply(result.message);
+      }
+
     } else {
       e.reply(result.message);
     }
@@ -1945,8 +1978,9 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(gameInfo.groupId, game, gameStatus.winner);
     } else {
-      // 猎人开枪后，如果游戏未结束，应该回到白天继续发言/投票
-      game.gameState.status = 'day_speak'; // 回到白天发言阶段
+      // 猎人开枪后，如果游戏未结束，应该进入正常的白天流程（发言->投票）
+      // 由于猎人是夜晚死亡的，所以lastStableStatus应该是night_phase_2
+      game.gameState.lastStableStatus = 'night_phase_2';
       await this.saveGameAll(gameInfo.groupId, game);
       await this.continueAfterDeathEvent(gameInfo.groupId, game);
     }
@@ -2352,12 +2386,10 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<void>}
    */
   async transitionToWitchPhase(groupId, game) {
-    if (!game || game.gameState.status !== 'night_phase_1') return; // 确保是从正确的阶段过来
+    if (!game || game.gameState.status !== 'night_phase_1') return;
 
-    game.gameState.status = 'night_phase_2'; // 进入女巫阶段
+    game.gameState.status = 'night_phase_2';
 
-    // 将狼人的"待处理"行动转移到"最终决定"
-    // 注意：这里我们只转移狼人的行动，其他行动暂时不动
     const werewolfActions = game.gameState.pendingNightActions.filter(
       action => action.role === 'WEREWOLF'
     );
@@ -2365,13 +2397,37 @@ export class WerewolfPlugin extends plugin {
       if (!game.gameState.nightActions['WEREWOLF']) {
         game.gameState.nightActions['WEREWOLF'] = {};
       }
-      // 将所有狼人行动记录下来
       werewolfActions.forEach(action => {
         game.gameState.nightActions['WEREWOLF'][action.userId] = action.action;
       });
     }
 
-    const attackTargetId = game.getWerewolfAttackTargetId();
+    // 调用方法获取最终攻击目标的 userId
+    const attackTargetUserId = game.getWerewolfAttackTargetId();
+
+    // 向所有存活的狼人私聊发送最终的结果
+    const livingWerewolves = game.players.filter(p => p.role === 'WEREWOLF' && p.isAlive);
+    let finalKillMsg = "======= 狼人频道 =======\n";
+
+    if (attackTargetUserId) {
+      // 使用 userId 查找目标玩家
+      const targetPlayer = game.players.find(p => p.userId === attackTargetUserId);
+      if (targetPlayer) {
+        finalKillMsg += `本夜已统一刀口：${targetPlayer.nickname}(${targetPlayer.tempId}号)。`;
+      } else {
+        // 容错处理
+        finalKillMsg += `本夜已统一刀口，但未能获取目标玩家信息 (ID: ${attackTargetUserId})。`;
+      }
+    } else {
+      // getWerewolfAttackTargetId 返回 null，意味着没有有效投票
+      finalKillMsg += "本夜狼人未行动。";
+    }
+    finalKillMsg += "\n========================";
+
+    // 异步将消息发送给每个狼人
+    for (const wolf of livingWerewolves) {
+      await this.sendDirectMessage(wolf.userId, finalKillMsg, groupId);
+    }
 
     // 设置女巫阶段的截止时间
     game.gameState.deadline = Date.now() + this.WITCH_ACTION_DURATION;
@@ -2380,27 +2436,27 @@ export class WerewolfPlugin extends plugin {
 
     // 准备并发送给女巫的私聊信息
     const witchPlayer = game.players.find(p => p.role === 'WITCH' && p.isAlive);
-    if (!witchPlayer) return; // 如果女巫死了，就什么也不做
-
-    let witchPrompt = `女巫请行动。\n`;
-    if (attackTargetId) {
-      // 使用 .find() 方法来获取被袭击玩家的信息
-      const targetPlayer = game.players.find(p => p.userId == attackTargetId);
-      if (targetPlayer) {
-        witchPrompt += `昨晚 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 被袭击了。\n`;
+    if (witchPlayer) {
+      let witchPrompt = `女巫请行动。\n`;
+      if (attackTargetUserId) {
+        // 同样使用 userId 查找被袭击的玩家
+        const targetPlayer = game.players.find(p => p.userId === attackTargetUserId);
+        if (targetPlayer) {
+          witchPrompt += `昨晚 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 被袭击了。\n`;
+        } else {
+          witchPrompt += `昨晚 未知玩家 被袭击了。\n`;
+        }
       } else {
-        // 作为保险，如果万一还是没找到，就用回原来的方式
-        witchPrompt += `昨晚 未知玩家 被袭击了。\n`;
+        witchPrompt += `昨晚无人被袭击（狼人未行动）。\n`;
       }
-    } else {
-      witchPrompt += `昨晚无人被袭击（狼人未行动或平票未统一）。\n`;
-    }
-    witchPrompt += `药剂状态：解药 ${game.potions.save ? '可用' : '已用'}，毒药 ${game.potions.kill ? '可用' : '已用'}。\n`;
-    if (game.potions.save) witchPrompt += `使用解药请私聊我：救 [编号]\n`;
-    if (game.potions.kill) witchPrompt += `使用毒药请私聊我：毒 [编号]\n`;
-    witchPrompt += `你的行动时间为 ${this.WITCH_ACTION_DURATION / 1000} 秒。\n${game.getAlivePlayerList()}`;
+      witchPrompt += `药剂状态：解药 ${game.potions.save ? '可用' : '已用'}，毒药 ${game.potions.kill ? '可用' : '已用'}。\n`;
+      if (game.potions.save) witchPrompt += `使用解药请私聊我：救 [编号]\n`;
+      if (game.potions.kill) witchPrompt += `使用毒药请私聊我：毒 [编号]\n`;
+      witchPrompt += `你的行动时间为 ${this.WITCH_ACTION_DURATION / 1000} 秒。\n${game.getAlivePlayerList()}`;
 
-    await this.sendDirectMessage(witchPlayer.userId, witchPrompt, groupId);
+      await this.sendDirectMessage(witchPlayer.userId, witchPrompt, groupId);
+    }
+
     await this.sendSystemGroupMsg(groupId, `狼人行动结束，开始女巫单独行动...`);
   }
 
