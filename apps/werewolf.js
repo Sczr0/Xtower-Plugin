@@ -2725,6 +2725,8 @@ export class WerewolfPlugin extends plugin {
 
     // 4. 解禁操作
     if (game.gameState.hasPermission) {
+      // 在单独解禁前，先禁言所有活着的玩家
+      await this.muteAllPlayers(groupId, game); 
       await this.mutePlayer(groupId, speaker.userId, 0); // 解禁当前发言者
     }
 
@@ -2855,12 +2857,16 @@ export class WerewolfPlugin extends plugin {
     let speechOrder = [];
     const deceasedPlayers = game.gameState.recentlyDeceased || [];
 
+    console.log('--- [调试信息] 开始检查死亡玩家数据 ---');
+    console.log('变量 deceasedPlayers 的内容是:', JSON.stringify(deceasedPlayers, null, 2));
+    console.log('--- [调试信息] 检查结束 ---');
+
     // 判断是否需要留遗言
     // 条件：第一天晚上死的，或者白天被投票出局的
     const isFirstNightDeath = game.gameState.currentDay === 1 && game.gameState.lastStableStatus === 'night_phase_2';
 
     if (deceasedPlayers.length > 0 && (isFirstNightDeath || cameFromVote)) {
-        const lastWordsPlayers = deceasedPlayers.map(p => p.userId);
+        const lastWordsPlayers = deceasedPlayers.map(p => p.userId).filter(id => id);
         speechOrder.push(...lastWordsPlayers); // 让死者先发言
         
         // 准备一个简单的遗言通知
