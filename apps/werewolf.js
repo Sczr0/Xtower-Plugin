@@ -2412,6 +2412,7 @@ export class WerewolfPlugin extends plugin {
       if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
         await this.startSheriffElectionPhase(groupId, game);
       } else {
+        game.gameState.lastStableStatus = game.gameState.status;
         await this.transitionToNextPhase(groupId, game, 'day_speak');
       }
     }
