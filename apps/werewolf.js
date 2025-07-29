@@ -2891,13 +2891,6 @@ export class WerewolfPlugin extends plugin {
     if (deceasedPlayers.length > 0 && (isFirstNightDeath || cameFromVote)) {
       const lastWordsPlayers = deceasedPlayers.map(p => p.userId).filter(id => id);
       speechOrder.push(...lastWordsPlayers); // 让死者先发言
-
-      // 准备一个简单的遗言通知
-      const announcementParts = lastWordsPlayers.map(userId => {
-        const playerInfo = game.getPlayerByUserId(userId);
-        return playerInfo ? `${playerInfo.number}号玩家` : "一位玩家";
-      });
-      await this.sendSystemGroupMsg(groupId, `现在是 ${announcementParts.join('、')} 发表遗言时间。`);
     }
 
     // 只有在不是从投票阶段过来的时候，才安排活人发言
