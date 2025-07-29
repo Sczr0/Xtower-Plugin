@@ -2726,7 +2726,7 @@ export class WerewolfPlugin extends plugin {
     if (speaker.isAlive) {
       // 分支一：如果玩家是活着的，就@他进行正常发言
       msg = [
-        segment.at(speaker.userId),
+        Bot.segment.at(speaker.userId),
         ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
       ];
     } else {
@@ -2961,11 +2961,11 @@ export class WerewolfPlugin extends plugin {
 
         if (unvotedPlayers.length > 0) {
           let reminderMsg = [
-            segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
+            Bot.segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
           ];
           unvotedPlayers.forEach(p => {
-            reminderMsg.push(segment.at(p.userId));
-            reminderMsg.push(segment.text(' '));
+            reminderMsg.push(Bot.segment.at(p.userId));
+            reminderMsg.push(Bot.segment.text(' '));
           });
           await this.sendSystemGroupMsg(groupId, reminderMsg);
         }
