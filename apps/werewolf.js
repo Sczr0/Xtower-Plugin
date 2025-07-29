@@ -880,7 +880,6 @@ class WerewolfGame {
 
     const gameStatus = this.checkGameStatus();
     if (gameStatus.isEnd) {
-      this.endGame();
       return {
         success: true,
         summary: finalSummary.join('\n'),
