@@ -2748,8 +2748,6 @@ export class WerewolfPlugin extends plugin {
 
     // 4. 解禁操作
     if (game.gameState.hasPermission) {
-      // 在单独解禁前，先禁言所有活着的玩家
-      await this.muteAllPlayers(groupId, game);
       await this.mutePlayer(groupId, speaker.userId, 0); // 解禁当前发言者
     }
 
