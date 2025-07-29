@@ -1926,11 +1926,10 @@ export class WerewolfPlugin extends plugin {
    */
   async handleHunterShoot(e) {
     const userId = e.user_id
-    // 查找用户所在的游戏，包括已死亡的玩家（因为猎人可能已死亡）
     const gameInfo = await this.findUserActiveGame(e.user_id, true);
     if (!gameInfo) return e.reply('未找到你参与的游戏。');
     const game = gameInfo.instance;
-    // 严格检查当前游戏状态和是否轮到该猎人开枪
+
     if (game.gameState.status !== 'hunter_shooting' || game.gameState.hunterNeedsToShoot !== e.user_id) {
       return e.reply("现在不是你开枪的时间。");
     }
@@ -1939,31 +1938,25 @@ export class WerewolfPlugin extends plugin {
     if (!targetTempId) return e.reply("指令格式错误，请发送 #开枪 编号");
 
     const hunterPlayer = game.players.find(p => p.userId === userId);
-    // 调用WerewolfGame中定义的猎人开枪行为
     const result = game._roleActions[ROLES.HUNTER].shoot(game, hunterPlayer, targetTempId);
 
     if (!result.success) return e.reply(result.message);
 
-    game.gameState.deadline = null; // 清除猎人开枪计时器对应的 deadline
-    await redis.zRem(DEADLINE_KEY, String(gameInfo.groupId)); // 从ZSET中移除
+    game.gameState.deadline = null;
+    await redis.zRem(DEADLINE_KEY, String(gameInfo.groupId));
 
-    // 将死亡玩家登记到“近期死亡”名单
     const targetPlayer = game.players.find(p => p.tempId === targetTempId);
-    if (targetPlayer) targetPlayer.isAlive = false; // 被带走的玩家死亡
-    if (hunterPlayer) hunterPlayer.isAlive = false; // 猎人死亡
 
-    game.gameState.recentlyDeceased = []; // 先清空，确保只处理本次开枪事件的死者
-    if (hunterPlayer) {
-      game.gameState.recentlyDeceased.push({ userId: hunterPlayer.userId, role: hunterPlayer.role });
-    }
+    // 在进入此方法前，猎人已经被加入了 recentlyDeceased 列表。
+    // 我们只需把新死的玩家加进去即可。
     if (targetPlayer) {
+      targetPlayer.isAlive = false; // 标记玩家死亡
       game.gameState.recentlyDeceased.push({ userId: targetPlayer.userId, role: targetPlayer.role });
     }
 
     const hunterInfo = game.getPlayerInfo(userId);
-    const targetInfo = game.getPlayerInfo(targetPlayer.userId);
-    // 根据当前阶段判断事件记录的阶段
-    const deathPhase = game.gameState.currentPhase === 'NIGHT_RESULT' ? 'night' : 'day';
+    const targetInfo = targetPlayer ? game.getPlayerInfo(targetPlayer.userId) : '一个空位';
+    const deathPhase = game.gameState.lastStableStatus === 'day_vote' ? 'day' : 'night';
     game.gameState.eventLog.push({
       day: game.gameState.currentDay,
       phase: deathPhase,
@@ -1974,16 +1967,11 @@ export class WerewolfPlugin extends plugin {
 
     await this.sendSystemGroupMsg(gameInfo.groupId, result.message);
 
-    const gameStatus = game.checkGameStatus();
-    if (gameStatus.isEnd) {
-      await this.endGameFlow(gameInfo.groupId, game, gameStatus.winner);
-    } else {
-      // 猎人开枪后，如果游戏未结束，应该进入正常的白天流程（发言->投票）
-      // 由于猎人是夜晚死亡的，所以lastStableStatus应该是night_phase_2
-      game.gameState.lastStableStatus = 'night_phase_2';
-      await this.saveGameAll(gameInfo.groupId, game);
-      await this.continueAfterDeathEvent(gameInfo.groupId, game);
-    }
+    // 保存所有状态变更（包括新死者和事件日志）
+    await this.saveGameAll(gameInfo.groupId, game);
+
+    // 直接调用后续流程，它会根据正确的 lastStableStatus 决定下一步。
+    await this.continueAfterDeathEvent(gameInfo.groupId, game);
   }
 
   /**
@@ -3085,37 +3073,43 @@ export class WerewolfPlugin extends plugin {
 
     const result = game.processVotes() // 结算投票
 
+    // 这里先置空，确保只有本轮产生的死者
+    game.gameState.recentlyDeceased = [];
     if (result.playerKicked) {
-      game.gameState.recentlyDeceased = [result.playerKicked];
-    } else {
-      game.gameState.recentlyDeceased = [];
+      // 不论死的是谁，都先加入死亡名单
+      game.gameState.recentlyDeceased.push(result.playerKicked);
     }
 
-    // 如果白痴翻牌，需要额外保存玩家数据
     if (result.idiotRevealed) {
-      await this.saveGameField(groupId, game, 'players'); // 保存玩家状态（包括白痴标签）
+      await this.saveGameField(groupId, game, 'players');
       console.log(`[${PLUGIN_NAME}] [DEBUG] Idiot revealed, saved player data for group ${groupId}`);
     }
 
-    await this.saveGameAll(groupId, game) // 保存最新游戏状态
-    await this.sendSystemGroupMsg(groupId, result.summary) // 公布投票摘要
+    await this.saveGameAll(groupId, game)
+    await this.sendSystemGroupMsg(groupId, result.summary)
 
     const playerKicked = result.playerKicked;
 
     if (result.gameEnded) {
       await this.endGameFlow(groupId, game, result.winner);
     } else if (playerKicked && playerKicked.userId === game.gameState.sheriffUserId) {
-      // 如果被票出去的是警长，优先处理警徽移交
       game.gameState.lastStableStatus = game.gameState.status;
       await this.startSheriffPassBadgePhase(groupId, game, playerKicked.userId);
     } else if (result.needsHunterShoot) {
       game.gameState.lastStableStatus = game.gameState.status;
+      // 注意：进入猎人开枪环节时，recentlyDeceased 已包含猎人
       await this.startHunterShootPhase(groupId, game);
     } else if (result.needsWolfKingClaw) {
       await this.startWolfKingClawPhase(groupId, game);
     } else {
-      // 如果没有其他特殊事件，就进入夜晚
-      await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      // BUG修复：对于普通玩家被票死或平票的情况，应进入白天发言（遗言）或直接夜晚
+      if (playerKicked) {
+        // 如果有人出局，进入白天发言（遗言）阶段
+        await this.transitionToNextPhase(groupId, game, 'day_speak');
+      } else {
+        // 如果没人出局（平票），直接进入夜晚
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      }
     }
   }
 
