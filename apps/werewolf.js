@@ -2384,7 +2384,8 @@ export class WerewolfPlugin extends plugin {
 
     let witchPrompt = `女巫请行动。\n`;
     if (attackTargetId) {
-      const targetPlayer = game.getPlayerObject(attackTargetId);
+      // 使用 .find() 方法来获取被袭击玩家的信息
+      const targetPlayer = game.players.find(p => p.userId == attackTargetId);
       if (targetPlayer) {
         witchPrompt += `昨晚 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 被袭击了。\n`;
       } else {
@@ -2496,7 +2497,7 @@ export class WerewolfPlugin extends plugin {
       return;
     }
 
-    const timedOutSpeaker = game.getPlayerInfo(game.gameState.currentSpeakerUserId);
+    const timedOutSpeaker = game.players.find(p => p.userId === game.gameState.currentSpeakerUserId);
     if (!timedOutSpeaker) return;
 
     await this.sendSystemGroupMsg(groupId, `${timedOutSpeaker.nickname}(${timedOutSpeaker.tempId}号) 发言时间到。`);
