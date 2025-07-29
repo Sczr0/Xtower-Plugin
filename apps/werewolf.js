@@ -2546,7 +2546,7 @@ export class WerewolfPlugin extends plugin {
     // 4. 【关键】调用游戏核心逻辑，移动到第一个发言人
     const firstSpeakerId = game.moveToNextSpeaker();
 
-    // 5. 调用你已有的“场务”方法，让第一个人开始发言
+    // 5. 调用已有的方法，让第一个人开始发言
     if (firstSpeakerId) {
       await this.announceAndSetSpeechTimer(groupId, game);
     } else {
@@ -2710,10 +2710,23 @@ export class WerewolfPlugin extends plugin {
     await this.saveGameField(groupId, game, 'gameState');
 
     // 3. 准备公告信息
-    const msg = [
-      segment.at(speaker.userId),
-      ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
-    ];
+    let msg;
+
+    if (speaker.isAlive) {
+      // 分支一：如果玩家是活着的，就@他进行正常发言
+      msg = [
+        segment.at(speaker.userId),
+        ` 请开始发言 (${currentPhaseDuration / 1000}秒)\n`
+      ];
+    } else {
+      // 分支二：如果玩家已死亡（发表遗言），就只说出昵称，避免@报错
+      msg = `现在轮到 ${speaker.nickname}(${speaker.tempId}号) 发表遗言 (${currentPhaseDuration / 1000}秒)\n`;
+    }
+
+    // 为了让后续代码能统一处理，我们确保 msg 是一个数组
+    if (typeof msg === 'string') {
+      msg = [msg];
+    }
 
     // 根据阶段添加不同的提示
     if (game.gameState.status === 'day_speak') {
