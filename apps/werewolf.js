@@ -1811,17 +1811,15 @@ export class WerewolfPlugin extends plugin {
         });
         voteStatusMsg += "========================";
 
-        // 使用 e.reply() 给当前操作者即时反馈
-        await e.reply(voteStatusMsg);
+      // 给当前操作者即时反馈
+      await this.sendDirectMessage(userId, voteStatusMsg, groupId);
 
-        // 遍历并通知其他狼人，避免重复发送
-        for (const wolf of livingWerewolves) {
-          if (wolf.userId !== userId) {
-            e.bot.sendPrivateMsg(wolf.userId, voteStatusMsg).catch(err => {
-              console.error(`[WerewolfPlugin] 发送私聊消息给 ${wolf.userId} 失败:`, err);
-            });
-          }
+      // 遍历并通知其他狼人，避免重复发送
+      for (const wolf of livingWerewolves) {
+        if (wolf.userId !== userId) {
+          await this.sendDirectMessage(wolf.userId, voteStatusMsg, groupId);
         }
+      }
       } else {
         e.reply(result.message);
       }
