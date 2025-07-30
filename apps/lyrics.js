@@ -98,17 +98,17 @@ export class LyricsPlugin extends plugin {
     #initSystem() {
         // 1. 加载插件主配置 (config.yaml)
         const masterConfig = loadPluginMasterConfig();
-        
+
         // 提取 lyrics 模块在主配置中的默认设置
         const lyricsMasterDefaults = masterConfig.lyrics || {};
-        
+
         // 2. 加载或初始化 lyrics 模块的动态数据配置 (lyrics_data_config.json)
         //    同时将 config.yaml 中的默认值按优先级合并进去
         this.config = this.#loadLyricsDataConfigWithMigration(lyricsMasterDefaults);
-        
+
         // 3. 将从 config.yaml 读取的 batch_draw_max_count (如果存在) 保存到实例属性
         //    如果yaml中没有，则使用一个硬编码的默认值
-        this.configEffectiveBatchDrawMaxCount = lyricsMasterDefaults.batch_draw_max_count !== undefined 
+        this.configEffectiveBatchDrawMaxCount = lyricsMasterDefaults.batch_draw_max_count !== undefined
             ? Number(lyricsMasterDefaults.batch_draw_max_count)
             : 20; // 默认值20
 
@@ -128,17 +128,17 @@ export class LyricsPlugin extends plugin {
             repositories: path.join(LYRIC_ROOT, 'repositories.json'),
             groupMapping: path.join(LYRIC_ROOT, 'groupLyricsMapping.json')
         };
-      
+
         let loadedDataFromJSON = {}; // 用于存储从 LYRICS_DATA_CONFIG_PATH 加载的数据
 
         // 1. 尝试从 LYRICS_DATA_CONFIG_PATH (即 data/lyrics/config.json) 加载数据
         if (fs.existsSync(LYRICS_DATA_CONFIG_PATH)) {
-          try {
-            loadedDataFromJSON = JSON.parse(fs.readFileSync(LYRICS_DATA_CONFIG_PATH, 'utf-8'));
-          } catch (e) {
-            this.logger.error(`模块配置文件 ${LYRICS_DATA_CONFIG_PATH} 解析失败, 将尝试从头开始或迁移旧数据:`, e);
-            // loadedDataFromJSON 保持为空对象 {}
-          }
+            try {
+                loadedDataFromJSON = JSON.parse(fs.readFileSync(LYRICS_DATA_CONFIG_PATH, 'utf-8'));
+            } catch (e) {
+                this.logger.error(`模块配置文件 ${LYRICS_DATA_CONFIG_PATH} 解析失败, 将尝试从头开始或迁移旧数据:`, e);
+                // loadedDataFromJSON 保持为空对象 {}
+            }
         }
 
         // 2. 确定 rateLimit 配置，优先级:
@@ -153,7 +153,7 @@ export class LyricsPlugin extends plugin {
         } else {
             finalRateLimit = { ...DEFAULT_LYRICS_DATA_CONFIG.rateLimit };
         }
-        
+
         // 3. 初始化当前模块的配置对象 (this.config)
         //    对于 libraries, repositories, groupMapping，优先使用 LYRICS_DATA_CONFIG_PATH 中的数据，
         //    如果不存在，则使用 DEFAULT_LYRICS_DATA_CONFIG 中的空对象作为初始值。
@@ -163,33 +163,33 @@ export class LyricsPlugin extends plugin {
             groupMapping: loadedDataFromJSON.groupMapping || { ...DEFAULT_LYRICS_DATA_CONFIG.groupMapping },
             rateLimit: finalRateLimit // 使用上面确定的 finalRateLimit
         };
-        
+
         // 4. 迁移旧的独立json配置文件 (libraries.json, repositories.json, groupLyricsMapping.json)
         //    仅当 LYRICS_DATA_CONFIG_PATH 中对应的键不存在或为空时，才尝试迁移。
         let migrated = false;
         Object.entries(legacyPaths).forEach(([key, filePath]) => {
-          if (!loadedDataFromJSON[key] || Object.keys(loadedDataFromJSON[key]).length === 0) {
-            if (fs.existsSync(filePath)) {
-              try {
-                currentDataConfig[key] = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-                fs.renameSync(filePath, `${filePath}.bak`); // 备份旧文件
-                this.logger.mark(`成功迁移旧配置 ${key} 到 ${LYRICS_DATA_CONFIG_PATH}`);
-                migrated = true;
-              } catch (e) {
-                this.logger.error(`迁移旧 ${key} 配置失败:`, e);
-              }
+            if (!loadedDataFromJSON[key] || Object.keys(loadedDataFromJSON[key]).length === 0) {
+                if (fs.existsSync(filePath)) {
+                    try {
+                        currentDataConfig[key] = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+                        fs.renameSync(filePath, `${filePath}.bak`); // 备份旧文件
+                        this.logger.mark(`成功迁移旧配置 ${key} 到 ${LYRICS_DATA_CONFIG_PATH}`);
+                        migrated = true;
+                    } catch (e) {
+                        this.logger.error(`迁移旧 ${key} 配置失败:`, e);
+                    }
+                }
             }
-          }
         });
-      
+
         // 5. 如果进行了迁移操作，或者 LYRICS_DATA_CONFIG_PATH 文件原先不存在，
         //    则将整合后的配置保存到 LYRICS_DATA_CONFIG_PATH。
         if (migrated || !fs.existsSync(LYRICS_DATA_CONFIG_PATH)) {
             this.#saveLyricsDataConfig(currentDataConfig);
         }
-        
+
         return currentDataConfig; // 返回最终的模块配置对象
-      }
+    }
 
     // 修改：保存 lyrics 模块的动态配置到 LYRICS_DATA_CONFIG_PATH (data/lyrics/config.json)
     #saveLyricsDataConfig(data) {
@@ -218,7 +218,7 @@ export class LyricsPlugin extends plugin {
                 .filter(f => {
                     try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; }
                 });
-            
+
             this.cache.lyrics.set(dir, {
                 files,
                 mtime: Date.now()
@@ -230,7 +230,7 @@ export class LyricsPlugin extends plugin {
 
     #getTargetDir(groupId) {
         const libName = this.config.groupMapping[String(groupId)]; // 确保groupId是字符串
-        return libName && this.config.libraries[libName] ? 
+        return libName && this.config.libraries[libName] ?
             this.config.libraries[libName] :
             COMMON_LYRICS_DIR;
     }
@@ -244,7 +244,7 @@ export class LyricsPlugin extends plugin {
 
             const updatedCache = this.cache.lyrics.get(targetDir); // 重新获取可能已更新的缓存
             if (!updatedCache || !updatedCache.files || updatedCache.files.length === 0) {
-                 throw new Error(`歌词库为空或无法访问: ${targetDir}`);
+                throw new Error(`歌词库为空或无法访问: ${targetDir}`);
             }
             const { files } = updatedCache;
 
@@ -280,60 +280,69 @@ export class LyricsPlugin extends plugin {
 
     // ================= 指令处理 =================
     async drawLyrics(e) {
-        const groupId = String(e.group_id); // 确保groupId是字符串
-        // this.config.rateLimit 已在 #initSystem 中正确初始化
-        const { maxPerHour, cooldown } = this.config.rateLimit; 
-        
+        const groupId = String(e.group_id);
+        // 只需获取 maxPerHour，因为周期是固定的1小时
+        const { maxPerHour } = this.config.rateLimit;
+        // 定义1小时的毫秒数作为固定的频率周期
+        const ONE_HOUR_IN_MS = 3600 * 1000;
+
         if (!this.cache.rateLimit.has(groupId)) {
-            this.cache.rateLimit.set(groupId, { count:0, resetAt:Date.now() });
+            this.cache.rateLimit.set(groupId, { count: 0, resetAt: Date.now() });
         }
-        
+
         const limit = this.cache.rateLimit.get(groupId);
-        if (Date.now() - limit.resetAt > cooldown) {
+
+        // 检查自上次重置以来是否已超过1小时
+        if (Date.now() - limit.resetAt > ONE_HOUR_IN_MS) {
+            // 如果超过1小时，则重置计数和重置时间戳
             limit.count = 0;
             limit.resetAt = Date.now();
         }
 
+        // 检查在本小时周期内是否已达到次数上限
         if (limit.count >= maxPerHour) {
-            const remainingTime = Math.ceil((cooldown - (Date.now() - limit.resetAt))/60000);
-            await e.reply(`[随机歌词] 冷却中哦~再等等 (剩余 ${remainingTime > 0 ? remainingTime : 1} 分钟)`);
+            // 计算当前1小时周期还剩多少分钟
+            const remainingMs = ONE_HOUR_IN_MS - (Date.now() - limit.resetAt);
+            const remainingMinutes = Math.ceil(remainingMs / 60000);
+            await e.reply(`[随机歌词] 「冷却中」 (大约还需等待 ${remainingMinutes > 0 ? remainingMinutes : 1} 分钟)`);
             return;
         }
 
         const isRiv = e.msg.includes('-riv');
         const lyrics = this.#getRandomLyric(this.#getTargetDir(groupId), isRiv);
         await e.reply(lyrics);
-        
+
+        // 成功抽取后，计数加一
         limit.count++;
     }
-    
+
     async batchDraw(e) {
         const match = e.msg.match(/^#?抽歌词\s+(\d+)\s*(-riv)?$/);
         if (!match) return await e.reply('❌ 格式：抽歌词 数量 [-riv]');
 
         const [_, countStr, rivFlag] = match;
         const isRiv = !!rivFlag;
-        
+
         // 使用 this.configEffectiveBatchDrawMaxCount (来自 config.yaml 或硬编码默认值)
-        const maxCount = this.configEffectiveBatchDrawMaxCount; 
+        const maxCount = this.configEffectiveBatchDrawMaxCount;
         let count = parseInt(countStr);
 
         if (isNaN(count) || count <= 0) {
             return await e.reply(`[随机歌词] 抽歌数量必须是正整数。`);
         }
         if (count > maxCount) {
-             await e.reply(`[随机歌词] 单次最多抽取 ${maxCount} 条歌词哦~已调整为 ${maxCount} 条。`);
-             count = maxCount;
+            await e.reply(`[随机歌词] 单次最多抽取 ${maxCount} 条歌词哦~已调整为 ${maxCount} 条。`);
+            count = maxCount;
         }
-        
-        const lyricsList = Array.from({length: count}, () => 
+
+        const lyricsList = Array.from({ length: count }, () =>
             this.#getRandomLyric(this.#getTargetDir(String(e.group_id)), isRiv)
         );
-        
+
         const msg = await common.makeForwardMsg(e, lyricsList, `[随机歌词] x${count}`);
         await e.reply(msg);
     }
-    
+
     // ================= 管理功能 =================
     // 以下所有调用 this.#saveConfig 的地方都已改为 this.#saveLyricsDataConfig
     async addRepo(e) {
@@ -348,8 +357,8 @@ export class LyricsPlugin extends plugin {
         try {
             new URL(url); // 简单验证URL格式
             if (!url.endsWith('.git')) { // 简单检查是否git仓库
-                 await e.reply('[随机歌词] 仓库URL似乎不是一个有效的 .git 地址。');
-                 return;
+                await e.reply('[随机歌词] 仓库URL似乎不是一个有效的 .git 地址。');
+                return;
             }
         } catch {
             await e.reply('[随机歌词] 仓库URL格式无效，请使用完整的git地址。');
@@ -376,7 +385,7 @@ export class LyricsPlugin extends plugin {
             return await e.reply('[随机歌词] 请指定要用于更新公用库的仓库名称。');
         }
         const repoUrl = this.config.repositories[repoName];
-        
+
         if (!repoUrl) {
             await e.reply(`[随机歌词] 没找到名为【${repoName}】的仓库。请先使用 #新建歌词仓库 添加它。`);
             return;
@@ -402,14 +411,14 @@ export class LyricsPlugin extends plugin {
         } catch { /*保持默认*/ }
 
         const tempDir = path.join(TEMP_DIR, `sync_${Date.now()}_${safeRepoName}`);
-        
+
         try {
             await fse.ensureDir(tempDir);
             this.logger.mark(`创建临时同步目录: ${tempDir}`);
-    
+
             const gitDirInTarget = path.join(targetDir, '.git');
             const isTargetRepoExist = await fse.pathExists(gitDirInTarget);
-            
+
             let sourceDirForSync = tempDir; // 默认从新克隆的目录同步
 
             if (isTargetRepoExist) {
@@ -430,14 +439,14 @@ export class LyricsPlugin extends plugin {
                 await execa('git', ['clone', '--depth=1', repoUrl, tempDir], { timeout: 120000 });
                 this.logger.mark(`仓库 ${repoUrl} 已克隆到 ${tempDir}`);
             }
-    
+
             this.logger.mark(`开始将 ${sourceDirForSync} 的 .txt 文件同步到 ${targetDir}`);
             await this.#syncFiles({
                 src: sourceDirForSync,
                 dest: targetDir,
                 patterns: ['**/*.txt'] // 只同步txt文件
             });
-            
+
             // 如果目标目录原先不是git仓库，或者pull失败后重新克隆了，
             // 那么现在 targetDir 可能还没有 .git 目录（如果 #syncFiles 只是复制文件内容）
             // 为了后续能pull，需要确保 .git 目录也被正确处理。
@@ -459,20 +468,20 @@ export class LyricsPlugin extends plugin {
             }
 
 
-            const { stdout: hash } = await execa('git', ['rev-parse', 'HEAD'], { 
+            const { stdout: hash } = await execa('git', ['rev-parse', 'HEAD'], {
                 cwd: targetDir, // 确保在目标目录获取版本
                 stdio: ['ignore', 'pipe', 'ignore']
             }).catch(() => ({ stdout: 'N/A' })); // 获取commit hash失败时的回退
-            
-            this.logger.mark(`同步完成！仓库 ${targetDir} 当前版本: ${hash.slice(0,7)}`);
-    
+
+            this.logger.mark(`同步完成！仓库 ${targetDir} 当前版本: ${hash.slice(0, 7)}`);
+
         } catch (error) {
             this.logger.error(`同步仓库 ${repoUrl} 到 ${targetDir} 过程中发生严重错误:`, error);
             throw error; // 将错误抛出，让调用者处理
         } finally {
             if (await fse.pathExists(tempDir)) {
                 this.logger.mark(`清理临时同步目录: ${tempDir}`);
-                await this.#nukeDirectory(tempDir).catch(err => 
+                await this.#nukeDirectory(tempDir).catch(err =>
                     this.logger.warn(`清理临时目录 ${tempDir} 遇到问题: ${err.message}`)
                 );
             }
@@ -481,7 +490,7 @@ export class LyricsPlugin extends plugin {
 
     async #syncFiles({ src, dest, patterns }) {
         await fse.ensureDir(dest); // 确保目标目录存在
-    
+
         if (process.platform === 'win32') {
             const { execa } = await import('execa');
             // Robocopy: /MIR 镜像，/XO 排除旧文件，/XF 排除指定文件，/XD 排除指定目录
@@ -496,7 +505,7 @@ export class LyricsPlugin extends plugin {
                 '/XO',   // 排除较旧的文件 (通常用于备份，同步时可能不需要)
                 '/NJH', '/NJS', '/NDL', '/NC', '/NS', // 精简输出
                 // '/PURGE' // 删除目标中不存在于源的文件/目录。配合 /S 相当于部分镜像。
-                         // 但只针对 *.txt，其他文件不受影响。
+                // 但只针对 *.txt，其他文件不受影响。
             ], { windowsVerbatimArguments: true, shell: true, timeout: 120000 });
         } else {
             // 使用 rsync (如果可用) 或 glob + fse.copy
@@ -507,12 +516,12 @@ export class LyricsPlugin extends plugin {
                 await execa('rsync', [
                     '-rtm', // recursive, times, prune-empty-dirs
                     '--delete', // delete extraneous files from dest dirs
-                    '--include=**/' , // ensures directories are traversed
+                    '--include=**/', // ensures directories are traversed
                     '--include=*.txt', // include all .txt files
                     '--exclude=*', // exclude all other files at the top level of each dir
                     `${src}/`, `${dest}/` // 注意末尾的斜杠
                 ], { timeout: 120000 });
-                 this.logger.mark(`使用 rsync 同步 ${src} 到 ${dest} 完成。`);
+                this.logger.mark(`使用 rsync 同步 ${src} 到 ${dest} 完成。`);
             } catch (rsyncErr) {
                 this.logger.warn(`rsync 执行失败 (${rsyncErr.message})，回退到手动复制...`);
                 // 回退到 glob 和 fse.copy
@@ -521,12 +530,12 @@ export class LyricsPlugin extends plugin {
                 await Promise.all(oldTxtFiles.map(file => fse.remove(path.join(dest, file))));
 
                 // 2. 匹配源目录中的 .txt 文件
-                const filesToCopy = await glob(patterns, { 
+                const filesToCopy = await glob(patterns, {
                     cwd: src,
                     nodir: true,
                     ignore: ['**/.git/**'] // 避免复制 .git 内部的东西
                 });
-                
+
                 // 3. 并行复制文件
                 await Promise.all(filesToCopy.map(async (fileRelativePath) => {
                     const srcPath = path.join(src, fileRelativePath);
@@ -580,12 +589,12 @@ export class LyricsPlugin extends plugin {
         }
 
         const libPath = path.join(LYRIC_ROOT, libName);
-        
+
         try {
             if (fs.existsSync(libPath)) {
                 return await e.reply(`[随机歌词] 歌词库【${libName}】已经存在啦，换个名字试试？`);
             }
-            
+
             await fs.promises.mkdir(libPath, { recursive: true });
             this.config.libraries[libName] = libPath; // 存储的是绝对路径
             this.#saveLyricsDataConfig(this.config);
@@ -603,12 +612,12 @@ export class LyricsPlugin extends plugin {
         }
         const match = e.msg.match(/^#?关联群组\s+(\d+)\s+([\u4e00-\u9fa5\w-]+)$/);
         if (!match) return await e.reply('[随机歌词] 格式不对哦～示范：#关联群组 群号 歌词库名');
-        
+
         const [_, groupId, libName] = match;
         if (!this.config.libraries[libName]) {
             return await e.reply(`[随机歌词] 没找到名为【${libName}】的歌词库。请先使用 #新建歌词库 创建它。`);
         }
-        
+
         this.config.groupMapping[groupId] = libName;
         this.#saveLyricsDataConfig(this.config);
         await e.reply(`[随机歌词] 群组 ${groupId} 成功关联到歌词库【${libName}】啦！`);
@@ -621,7 +630,7 @@ export class LyricsPlugin extends plugin {
         }
         const match = e.msg.match(/^#?获取歌词\s+([\u4e00-\u9fa5\w-]+)\s+([\u4e00-\u9fa5\w-]+)$/);
         if (!match) return await e.reply('📌 格式：#获取歌词 目标歌词库名 仓库名');
-        
+
         const [_, libName, repoName] = match;
         if (!this.config.libraries[libName]) {
             return await e.reply(`[随机歌词] 目标歌词库【${libName}】不存在。请先使用 #新建歌词库 创建。`);
@@ -650,10 +659,10 @@ export class LyricsPlugin extends plugin {
         if (libs.length === 0) {
             return await e.reply('[随机歌词] 当前没有创建任何歌词库。主人可以使用 #新建歌词库 来创建。');
         }
-        
+
         let response = '[随机歌词] 现有歌词库列表：\n';
         response += libs.map(lib => `  - ${lib}`).join('\n');
-        
+
         // 显示群聊关联情况
         const currentGroupLib = this.config.groupMapping[String(e.group_id)];
         if (currentGroupLib) {
@@ -662,7 +671,7 @@ export class LyricsPlugin extends plugin {
             response += `\n\n本群 (${e.group_id}) 未指定歌词库，将使用公共歌词库。`;
         }
         if (e.isMaster) {
-             response += `\n主人可以使用 #关联群组 群号 歌词库名 来设置。`;
+            response += `\n主人可以使用 #关联群组 群号 歌词库名 来设置。`;
         }
         await e.reply(response);
     }
@@ -678,7 +687,7 @@ export class LyricsPlugin extends plugin {
         }
 
         let response = '[随机歌词] 已添加的云端仓库列表：\n';
-        response += entries.map(([name, url]) => 
+        response += entries.map(([name, url]) =>
             `✨ ${name}\n   ➤ ${url}` // 显示完整URL
         ).join('\n');
         response += '\n\n使用【#获取歌词 目标歌词库名 仓库名】可将仓库内容同步到指定歌词库。';
@@ -692,13 +701,13 @@ export class LyricsPlugin extends plugin {
         }
         const libName = e.msg.split(' ')[1]?.trim();
         if (!libName) return await e.reply('[随机歌词] 请指定要删除的歌词库名称。格式：#删除歌词库 歌词库名');
-        
+
         if (!this.config.libraries[libName]) {
             return await e.reply(`[随机歌词] 歌词库【${libName}】不存在。`);
         }
-        
+
         const libPath = this.config.libraries[libName];
-        
+
         // 检查是否有群组关联此库
         const affectedGroups = Object.entries(this.config.groupMapping)
             .filter(([_, mappedLibName]) => mappedLibName === libName)
@@ -716,7 +725,7 @@ export class LyricsPlugin extends plugin {
         try {
             await this.#safeRemoveDir(libPath); // 安全删除目录
             delete this.config.libraries[libName];
-            
+
             // 如果强制删除，解除关联群组
             if (affectedGroups.length > 0) {
                 affectedGroups.forEach(groupId => {
@@ -743,62 +752,64 @@ export class LyricsPlugin extends plugin {
         }
         const repoName = e.msg.split(' ')[1]?.trim();
         if (!repoName) return await e.reply('[随机歌词] 请指定要删除的仓库配置名称。格式：#删除歌词仓库 仓库名');
-    
+
         if (!this.config.repositories[repoName]) {
             return await e.reply(`[随机歌词] 名为【${repoName}】的仓库配置不存在。`);
         }
-    
+
         // 删除仓库配置本身很简单，但重要的是提示用户这不会删除已同步到歌词库的本地文件
         // 也不影响歌词库与群组的关联（因为关联是基于歌词库名，而非仓库名）
-        
+
         delete this.config.repositories[repoName];
         this.#saveLyricsDataConfig(this.config);
-    
+
         await e.reply(
             `[随机歌词] 仓库配置【${repoName}】已成功删除。\n` +
             `请注意：这仅移除了仓库的记录，不会删除任何已通过此仓库同步到本地歌词库的文件。` +
             `如果需要删除对应的本地歌词库，请使用 #删除歌词库 命令。`
         );
     }
-        
+
     async setRateLimit(e) {
         if (!e.isMaster) {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^#?设置频率限制\s+(\d+)\s+(\d+)$/);
-        if (!match) return await e.reply('⏳ 格式：#设置频率限制 每小时次数 冷却秒数');
-        
-        const [_, maxStr, cdStr] = match;
-        const maxPerHour = parseInt(maxStr);
-        const cooldownSeconds = parseInt(cdStr);
-
-        if (isNaN(maxPerHour) || maxPerHour < 0 || isNaN(cooldownSeconds) || cooldownSeconds < 10) {
-            return await e.reply('[随机歌词] 参数无效。每小时次数需>=0，冷却秒数需>=10。');
+        // 修改正则表达式，只匹配一个数字参数
+        const match = e.msg.match(/^#?设置频率限制\s+(\d+)$/);
+        if (!match) {
+            // 更新帮助信息
+            return await e.reply('⏳ 格式：#设置频率限制 每小时次数');
         }
-        const cooldown = cooldownSeconds * 1000;
 
-        this.config.rateLimit = { 
-            maxPerHour: maxPerHour, 
-            cooldown: cooldown 
+        const [_, maxStr] = match;
+        const maxPerHour = parseInt(maxStr);
+
+        // 更新验证逻辑
+        if (isNaN(maxPerHour) || maxPerHour < 0) {
+            return await e.reply('[随机歌词] 参数无效。每小时次数必须是一个大于或等于0的数字。');
+        }
+
+        // 只保存 maxPerHour
+        this.config.rateLimit = {
+            maxPerHour: maxPerHour
         };
         this.#saveLyricsDataConfig(this.config); // 保存到 lyrics_data_config.json
-        
+
+        // 更新回复消息
         await e.reply([
             `[随机歌词] 频率限制已更新！`,
             `每小时最多抽歌: ${maxPerHour}次`,
-            `冷却时间: ${cooldownSeconds}秒 (即 ${cooldown}毫秒)`,
             `此设置为全局默认，并已保存。`
         ].join('\n'));
     }
-
     async #safeRemoveDir(targetDirAbs) {
         // 再次确认路径安全性，确保只删除 LYRIC_ROOT 下的目录
         const safeBase = path.resolve(LYRIC_ROOT); // 获取绝对路径以进行比较
         const resolvedTargetDir = path.resolve(targetDirAbs);
 
         if (!resolvedTargetDir.startsWith(safeBase) || resolvedTargetDir === safeBase) {
-             // 禁止删除 LYRIC_ROOT 本身或其外部的目录
+            // 禁止删除 LYRIC_ROOT 本身或其外部的目录
             throw new Error(`[随机歌词] 安全限制：无法删除目录 ${targetDirAbs}。只能删除位于 ${LYRIC_ROOT} 内的子目录。`);
         }
 
@@ -806,10 +817,10 @@ export class LyricsPlugin extends plugin {
             this.logger.warn(`尝试删除不存在的目录: ${resolvedTargetDir}`);
             return;
         }
-        
+
         this.logger.mark(`准备安全删除目录: ${resolvedTargetDir}`);
         await fse.remove(resolvedTargetDir); // fs-extra的remove是递归且安全的
-        
+
         if (fs.existsSync(resolvedTargetDir)) {
             throw new Error(`[随机歌词] 目录 ${resolvedTargetDir} 删除后依然存在，可能需要手动清理。`);
         }
