@@ -263,10 +263,13 @@ class GameCleaner {
  */
 class WerewolfGame {
   /**
-   * 构造函数，初始化游戏状态和玩家数据。
-   * @param {object} initialData - 初始游戏数据，用于从Redis加载时重建游戏。
-   */
-  constructor(initialData = {}) {
+     * 构造函数，初始化游戏状态和玩家数据。
+     * @param {object} presets - 【新增】游戏预设配置 (即 GAME_PRESETS)。
+     * @param {object} initialData - 初始游戏数据，用于从Redis加载时重建游戏。
+     */
+  constructor(presets, initialData = {}) {
+    // 将传入的“板子菜单”保存到游戏实例中
+    this.presets = presets;
     this.players = initialData.players || []
     // 默认角色名称映射
     this.roles = initialData.roles || { [ROLES.WEREWOLF]: '狼人', [ROLES.VILLAGER]: '村民', [ROLES.SEER]: '预言家', [ROLES.WITCH]: '女巫', [ROLES.HUNTER]: '猎人', [ROLES.GUARD]: '守卫', [ROLES.WOLF_KING]: '狼王', [ROLES.WHITE_WOLF_KING]: '白狼王', [ROLES.IDIOT]: '白痴' }
@@ -470,14 +473,15 @@ class WerewolfGame {
       lastStableStatus: null,
       presetName: presetName || 'default',
     };
-    this.gameState.pendingNightActions = []; // 用于存储本晚待处理的行动
+    this.gameState.pendingNightActions = [];
     this.players = [];
     this.potions = { save: true, kill: true };
     this.userGroupMap = {};
 
     await this.addPlayer(hostUserId, hostNickname, groupId);
 
-    const preset = GAME_PRESETS[this.gameState.presetName] || GAME_PRESETS['default'];
+    // 从 this.presets 中查找配置
+    const preset = this.presets[this.gameState.presetName] || this.presets['default'];
     return { success: true, message: `游戏创建成功！当前为【${preset.name}】板子，等待玩家加入...\n房主可以 #开始狼人杀` };
   }
 
@@ -1427,33 +1431,31 @@ export class WerewolfPlugin extends plugin {
   }
 
   /**
-   * 获取指定群组的游戏实例。如果不存在且 `createIfNotExist` 为true，则创建新实例。
-   * @param {string} groupId - 群组ID。
-   * @param {boolean} [createIfNotExist=false] - 如果游戏不存在是否创建。
-   * @param {string} [hostUserId=null] - 房主用户ID (创建时需要)。
-   * @param {string} [hostNickname=null] - 房主昵称 (创建时需要)。
-   * @returns {Promise<WerewolfGame|null>} 游戏实例或null。
-   */
+     * 获取指定群组的游戏实例。如果不存在且 `createIfNotExist` 为true，则创建新实例。
+     * @param {string} groupId - 群组ID。
+     * @param {boolean} [createIfNotExist=false] - 如果游戏不存在是否创建。
+     * @param {string} [hostUserId=null] - 房主用户ID (创建时需要)。
+     * @param {string} [hostNickname=null] - 房主昵称 (创建时需要)。
+     * @returns {Promise<WerewolfGame|null>} 游戏实例或null。
+     */
   async getGameInstance(groupId, createIfNotExist = false, hostUserId = null, hostNickname = null) {
-    // Always attempt to load from Redis first to ensure the latest state
     const gameData = await GameDataManager.load(groupId);
-    let game = null; // Initialize game to null
+    let game = null;
 
     if (gameData) {
-      game = new WerewolfGame(gameData); // Reconstruct instance from loaded data
-      this.gameInstances.set(groupId, game); // Update memory cache with the fresh instance
+      // 重建实例时，传入预设配置和加载的数据
+      game = new WerewolfGame(GAME_PRESETS, gameData);
+      this.gameInstances.set(groupId, game);
 
-      // If game is running, re-register auto-cleanup timer
       if (game.gameState.isRunning) {
         GameCleaner.registerGame(groupId, this);
       }
     } else if (createIfNotExist && hostUserId && hostNickname) {
-      // Only create a new game if it wasn't found in Redis and createIfNotExist is true
-      game = new WerewolfGame(); // Create new instance
-      this.gameInstances.set(groupId, game); // Cache new instance
-      GameCleaner.registerGame(groupId, this); // Register new game's auto cleanup
+      // 创建新实例时，传入预设配置
+      game = new WerewolfGame(GAME_PRESETS);
+      this.gameInstances.set(groupId, game);
+      GameCleaner.registerGame(groupId, this);
     }
-    // If gameData is null and createIfNotExist is false, game remains null.
 
     return game;
   }
@@ -1710,7 +1712,8 @@ export class WerewolfPlugin extends plugin {
     }
     const { instance: game, groupId } = gameInfo;
 
-    if (!game.gameState.isRunning || !game.gameState.status.startsWith('night_phase')) {
+    if (!game.gameState.isRunning || !game.gameState.status.toLowerCase().startsWith('night_phase')) {
+      // 如果游戏未运行或不处于夜晚阶段，则不处理
       return;
     }
 
@@ -1785,15 +1788,18 @@ export class WerewolfPlugin extends plugin {
         });
         voteStatusMsg += "========================";
 
-        // 4. 将票型信息私聊发送给所有存活的狼人
+        // 使用 e.reply() 给当前操作者即时反馈
+        await e.reply(voteStatusMsg);
+
+        // 遍历并通知其他狼人，避免重复发送
         for (const wolf of livingWerewolves) {
-          // 使用 e.bot.sendPrivateMsg 方法发送私聊
-          e.bot.sendPrivateMsg(wolf.userId, voteStatusMsg).catch(err => {
-            console.error(`[WerewolfPlugin] 发送私聊消息给 ${wolf.userId} 失败:`, err);
-          });
+          if (wolf.userId !== userId) {
+            e.bot.sendPrivateMsg(wolf.userId, voteStatusMsg).catch(err => {
+              console.error(`[WerewolfPlugin] 发送私聊消息给 ${wolf.userId} 失败:`, err);
+            });
+          }
         }
       } else {
-        // 其他角色的成功提示
         e.reply(result.message);
       }
 
