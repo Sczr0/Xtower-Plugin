@@ -1,6 +1,7 @@
 // --- 插件名称和功能开关 ---
 const PLUGIN_NAME = '狼人杀';
 const SELF_DESTRUCT_ENABLED = true; // 硬编码的自爆功能开关
+const AUTO_MUTE_ENABLED = true; // 自动禁言功能开关
 
 // --- 游戏常量定义 ---
 const ROLES = {
@@ -18,22 +19,16 @@ const ROLES = {
 // --- 游戏板子预设 ---
 const GAME_PRESETS = {
   'default': {
-    name: '默认板子 (6-12人)',
-    playerCount: { min: 3, max: 12 },
+    name: '默认板子 (6-15人)',
+    playerCount: { min: 3, max: 15 },
     roles: null,
     hasSheriff: false,
     ruleset: '屠城' // 默认规则是屠城
   },
   '屠边局': {
-    name: '经典屠边局 (9人)',
-    playerCount: { min: 9, max: 9 },
-    roles: {
-      [ROLES.WEREWOLF]: 3,
-      [ROLES.SEER]: 1,
-      [ROLES.WITCH]: 1,
-      [ROLES.HUNTER]: 1,
-      [ROLES.VILLAGER]: 3
-    },
+    name: '屠边 (6-15人)',
+    playerCount: { min: 3, max: 15 },
+    roles: null,
     hasSheriff: false,
     ruleset: '屠边'
   },
@@ -52,7 +47,6 @@ const GAME_PRESETS = {
     ruleset: '屠边' //这个板子通常是屠边规则
   }
 };
-const AUTO_MUTE_ENABLED = true; // 自动禁言功能开关
 
 const TAGS = {
   GUARDED: 'GUARDED',                 // 被守护
@@ -570,7 +564,7 @@ class WerewolfGame {
       13: { werewolf: 4, god: 4, villager: 5 },
       14: { werewolf: 5, god: 5, villager: 4 },
       15: { werewolf: 5, god: 5, villager: 5 },
-      18: { werewolf: 6, god: 6, villager: 6 },
+      18: { werewolf: 6, god: 5, villager: 7 },
     };
 
     const config = distributionConfig[playerCount];
