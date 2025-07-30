@@ -1075,9 +1075,15 @@ class WerewolfGame {
     const logEvent = (event) => this.gameState.eventLog.push({ day: currentDay, phase: 'day', ...event });
 
     // --- 计票逻辑---
+    // 首先筛选出所有有投票权的玩家，并计算总人数
+    const voters = this.players.filter(p => p.isAlive && !p.tags.includes(TAGS.REVEALED_IDIOT));
+    const totalVotersCount = voters.length;
+
     const voteCounts = {} // 记录每个玩家获得的票数
     const voteDetails = {} // 记录每个玩家被谁投票
-    this.players.filter(p => p.isAlive && !p.tags.includes(TAGS.REVEALED_IDIOT)).forEach(voter => { // 确保白痴不参与计票
+
+    // 使用上面筛选出的 voters 列表进行遍历
+    voters.forEach(voter => {
       const targetTempId = this.gameState.votes[voter.userId];
 
       // 判断投票权重，警长为1.5票，其他人为1票
@@ -1095,7 +1101,7 @@ class WerewolfGame {
       }
     });
 
-    let voteSummary = ["投票结果："];
+    let voteSummary = [`本轮总投票人数: ${totalVotersCount}`, "投票结果："];
     for (const targetTempId in voteCounts) {
       if (targetTempId === '弃票') continue;
       const targetPlayer = this.players.find(p => p.tempId === targetTempId);
@@ -1116,38 +1122,34 @@ class WerewolfGame {
     }
 
     // --- 处理出局玩家的逻辑 ---
-
     this.gameState.votes = {}; // 清空旧的投票记录
+    let playerKickedToday = null;
 
-    let playerKickedToday = null; // 定义一个变量，用来存放今天被票出去的玩家
-
-    if (tiedPlayers.length === 1) { // 有唯一最高票玩家
+    // 票数是否过半的校验
+    if (tiedPlayers.length === 1 && maxVotes > totalVotersCount / 2) {
       const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0]);
       if (eliminatedPlayer) {
-        const voters = voteDetails[eliminatedPlayer.tempId] || [];
-        logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: voters });
+        const votersDetail = voteDetails[eliminatedPlayer.tempId] || [];
+        logEvent({ type: 'VOTE_OUT', target: this.getPlayerInfo(eliminatedPlayer.userId), voters: votersDetail });
 
-        if (eliminatedPlayer.role === ROLES.IDIOT) { // 如果是白痴
+        if (eliminatedPlayer.role === ROLES.IDIOT) {
           eliminatedPlayer.tags.push(TAGS.REVEALED_IDIOT);
           voteSummary.push(`${eliminatedPlayer.nickname}(${eliminatedPlayer.tempId}号) 被投票出局，但他/她亮出了【白痴】的身份！他/她不会死亡，但将失去后续的投票权。`);
-          // 白痴没死，所以 playerKickedToday 保持为 null
           return {
             success: true, summary: voteSummary.join('\n'), gameEnded: false,
             idiotRevealed: true, revealedIdiotId: eliminatedPlayer.userId, playerKicked: null
           };
-        } else { // 如果是其他角色
+        } else {
           eliminatedPlayer.isAlive = false;
-          playerKickedToday = eliminatedPlayer; // 记录下这个被票出局的玩家
-          voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`);
+          playerKickedToday = eliminatedPlayer;
+          voteSummary.push(`${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 因得票数(${maxVotes})超过总票数一半(${totalVotersCount / 2})而被投票出局。`);
 
-          // 如果是猎人，直接返回，并带上死者信息
           if (eliminatedPlayer.role === ROLES.HUNTER) {
             this.gameState.status = 'hunter_shooting';
             this.gameState.hunterNeedsToShoot = eliminatedPlayer.userId;
             this.gameState.currentPhase = 'DAY';
             return { success: true, summary: voteSummary.join('\n'), gameEnded: false, needsHunterShoot: true, playerKicked: playerKickedToday };
           }
-          // 如果是狼王，直接返回，并带上死者信息
           if (eliminatedPlayer.role === ROLES.WOLF_KING) {
             this.gameState.status = 'wolf_king_clawing';
             this.gameState.wolfKingNeedsToClaw = eliminatedPlayer.userId;
@@ -1156,11 +1158,16 @@ class WerewolfGame {
           }
         }
       }
-    } else if (tiedPlayers.length > 1) { // 平票
-      const sortedTiedPlayers = [...tiedPlayers].sort();
-      voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
-    } else { // 无人被投票或全部弃票
-      voteSummary.push("所有人都弃票或投票无效，本轮无人出局。");
+    } else { //  统一处理所有无人出局的情况（票数未过半、平票、无人投票）
+      if (tiedPlayers.length === 1 && maxVotes <= totalVotersCount / 2) {
+        const targetPlayer = this.players.find(p => p.tempId === tiedPlayers[0]);
+        voteSummary.push(`得票最高者 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 的票数(${maxVotes})未超过总投票人数(${totalVotersCount})的一半，本轮无人出局。`);
+      } else if (tiedPlayers.length > 1) {
+        const sortedTiedPlayers = [...tiedPlayers].sort();
+        voteSummary.push(`出现平票 (${sortedTiedPlayers.map(id => `${id}号`).join(', ')})，本轮无人出局。`);
+      } else {
+        voteSummary.push("所有人都弃票或投票无效，本轮无人出局。");
+      }
     }
 
     const gameStatus = this.checkGameStatus();
@@ -2950,10 +2957,6 @@ export class WerewolfPlugin extends plugin {
   async startDayPhase(groupId, game) {
     if (!game) return;
 
-    console.log('--- [调试信息] 进入startDayPhase，开始检查玩家花名册 game.players ---');
-    console.log(JSON.stringify(game.players, null, 2));
-    console.log('--- [调试信息] 玩家花名册检查结束 ---');
-
     game.gameState.status = 'day_speak';
 
     // 判断是从投票阶段过来的还是从夜晚阶段过来的
@@ -2962,10 +2965,6 @@ export class WerewolfPlugin extends plugin {
     // --- 构建发言顺序 ---
     let speechOrder = [];
     const deceasedPlayers = game.gameState.recentlyDeceased || [];
-
-    console.log('--- [调试信息] 开始检查死亡玩家数据 ---');
-    console.log('变量 deceasedPlayers 的内容是:', JSON.stringify(deceasedPlayers, null, 2));
-    console.log('--- [调试信息] 检查结束 ---');
 
     // 判断是否需要留遗言
     // 条件：第一天晚上死的，或者白天被投票出局的
@@ -3025,7 +3024,7 @@ export class WerewolfPlugin extends plugin {
       await this.unmuteAllPlayers(groupId, game, true); // FIX: 只解禁存活玩家
     }
 
-    await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号] 或 #投票 弃票\n你有 ${this.VOTE_DURATION / 1000} 秒时间。\n存活玩家：\n${alivePlayerList}`)
+    await this.sendSystemGroupMsg(groupId, `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号] 或 #投票 弃票\n投票时间共 ${this.VOTE_DURATION / 1000} 秒，超时的投票视为无效，请注意。\n存活玩家：\n${alivePlayerList}`)
 
     this.clearPhaseTimer(groupId); // 清理可能存在的旧计时器，以防万一
 
@@ -3130,7 +3129,7 @@ export class WerewolfPlugin extends plugin {
 
     const hunterInfo = game.getPlayerInfo(hunterUserId)
     const alivePlayerList = game.getAlivePlayerList()
-    await this.sendSystemGroupMsg(groupId, `${hunterInfo} 是猎人！临死前可以选择开枪带走一人！\n你有 ${this.HUNTER_SHOOT_DURATION / 1000} 秒时间。\n存活玩家：\n${alivePlayerList}`)
+    await this.sendSystemGroupMsg(groupId, `${hunterInfo} 是猎人！临死前可以选择开枪带走一人！\n猎人选择时间： ${this.HUNTER_SHOOT_DURATION / 1000} 秒，请猎人查看私信\n存活玩家：\n${alivePlayerList}`)
     await this.sendDirectMessage(hunterUserId, `你是猎人，请开枪！\n发送 #开枪 [编号]\n你有 ${this.HUNTER_SHOOT_DURATION / 1000} 秒时间。\n${alivePlayerList}`, groupId)
   }
 
