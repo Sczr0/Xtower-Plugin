@@ -1349,7 +1349,7 @@ export class WerewolfPlugin extends plugin {
       event: 'message',
       priority: 50,
       rule: [
-        { reg: '^#创建狼人杀$', fnc: 'createGame' },
+        { reg: '^#创建狼人杀(?:\\s+(.*))?$', fnc: 'createGame' },
         { reg: '^#加入狼人杀$', fnc: 'joinGame' },
         { reg: '^#退出狼人杀$', fnc: 'leaveGame' },
         { reg: '^#开始狼人杀$', fnc: 'startGame' },
@@ -1508,22 +1508,24 @@ export class WerewolfPlugin extends plugin {
   // --- 命令处理函数 ---
 
   /**
-   * 处理 #创建狼人杀 命令。
-   * @param {object} e - 消息事件对象。
-   * @returns {Promise<boolean>} 是否成功处理。
-   */
+     * 处理 #创建狼人杀 命令。
+     * @param {object} e - 消息事件对象，框架会自动在 e.match 中附加正则匹配结果。
+     * @returns {Promise<boolean>} 是否成功处理。
+     */
   async createGame(e) {
     const groupId = e.group_id;
-    if (!groupId) return e.reply("请在群聊中使用此命令。");
+    if (!groupId) {
+      return e.reply("请在群聊中使用此命令。");
+    }
 
     let game = await this.getGameInstance(groupId);
     if (game && game.gameState.status !== 'ended') {
       return e.reply(`本群已有游戏（状态: ${game.gameState.status}）。\n请先 #结束狼人杀。`);
     }
 
-    // 解析板子名称
-    const match = e.msg.match(/^#创建狼人杀(?:\s+(.*))?$/);
-    const presetName = match && match[1] ? match[1].trim() : 'default';
+    // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
+    // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
+    const presetName = e.match && e.match[1] ? e.match[1].trim() : 'default';
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname);
     const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, presetName);
@@ -3259,10 +3261,10 @@ export class WerewolfPlugin extends plugin {
   }
 
   /**
-   * 在死亡相关事件（猎人开枪、警徽移交等）处理完毕后，继续游戏流程。
-   * @param {string} groupId - 群组ID。
-   * @param {WerewolfGame} game - 游戏实例。
-   */
+     * 在死亡相关事件（猎人开枪、警徽移交等）处理完毕后，继续游戏流程。
+     * @param {string} groupId - 群组ID。
+     * @param {WerewolfGame} game - 游戏实例。
+     */
   async continueAfterDeathEvent(groupId, game) {
     // 1. 清理可能存在的计时器和deadline
     this.clearPhaseTimer(groupId);
@@ -3276,12 +3278,12 @@ export class WerewolfPlugin extends plugin {
       await this.endGameFlow(groupId, game, gameStatus.winner);
       return;
     }
+
     // 3. 如果游戏没结束，判断下一步该去哪
-    let nextStatus = '';
     switch (game.gameState.lastStableStatus) {
       case 'night_phase_2':
-        // 晚上死人，下一步是白天
-        // 但我们还要考虑第一天警长竞选的情况
+        // 场景：夜晚死亡（包括猎人）后开枪。
+        // 动作：继续进行白天流程。
         if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
           await this.startSheriffElectionPhase(groupId, game);
         } else {
@@ -3290,8 +3292,9 @@ export class WerewolfPlugin extends plugin {
         break;
 
       case 'day_vote':
-        // 白天死人，放逐遗言
-        await this.transitionToNextPhase(groupId, game, 'day_speak');
+        // 场景：白天被票死（包括猎人）后开枪。
+        // 动作：结束白天，进入夜晚。
+        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
         break;
 
       default:
