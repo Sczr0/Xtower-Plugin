@@ -2426,6 +2426,8 @@ export class WerewolfPlugin extends plugin {
       await this.sendDirectMessage(wolf.userId, finalKillMsg, groupId);
     }
 
+    await this.sendSystemGroupMsg(groupId, `狼人行动结束，开始女巫单独行动...`);
+
     // 设置女巫阶段的截止时间
     game.gameState.deadline = Date.now() + this.WITCH_ACTION_DURATION;
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
@@ -2453,8 +2455,6 @@ export class WerewolfPlugin extends plugin {
 
       await this.sendDirectMessage(witchPlayer.userId, witchPrompt, groupId);
     }
-
-    await this.sendSystemGroupMsg(groupId, `狼人行动结束，开始女巫单独行动...`);
   }
 
   /**
