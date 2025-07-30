@@ -3102,14 +3102,16 @@ export class WerewolfPlugin extends plugin {
       await this.startSheriffPassBadgePhase(groupId, game, playerKicked.userId);
     } else if (result.needsHunterShoot) {
       game.gameState.lastStableStatus = game.gameState.status;
-      // 注意：进入猎人开枪环节时，recentlyDeceased 已包含猎人
       await this.startHunterShootPhase(groupId, game);
     } else if (result.needsWolfKingClaw) {
       await this.startWolfKingClawPhase(groupId, game);
     } else {
-      // BUG修复：对于普通玩家被票死或平票的情况，应进入白天发言（遗言）或直接夜晚
       if (playerKicked) {
-        // 如果有人出局，进入白天发言（遗言）阶段
+        // 在进入遗言阶段前，必须先记录下我们是从投票阶段过来的。
+        // `game.gameState.status` 此刻的值就是 'day_vote'。
+        game.gameState.lastStableStatus = game.gameState.status;
+
+        // 进入白天发言阶段（用于发表遗言）
         await this.transitionToNextPhase(groupId, game, 'day_speak');
       } else {
         // 如果没人出局（平票），直接进入夜晚
@@ -3117,7 +3119,6 @@ export class WerewolfPlugin extends plugin {
       }
     }
   }
-
   /**
    * 开始猎人开枪阶段。
    * @param {string} groupId - 群组ID。
