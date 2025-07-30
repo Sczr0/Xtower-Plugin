@@ -1573,10 +1573,14 @@ export class WerewolfPlugin extends plugin {
 
     // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
     // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
-    const presetName = e.match && e.match[1] ? e.match[1].trim() : 'default';
+    const presetNameInput = e.match && e.match[1] ? e.match[1].trim() : 'default';
+    // 规范化板子名称，例如将“预女猎白”映射到“预女猎白”键
+    const normalizedPresetName = Object.keys(GAME_PRESETS).find(key =>
+      key.toLowerCase() === presetNameInput.toLowerCase()
+    ) || 'default';
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname);
-    const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, presetName);
+    const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, normalizedPresetName);
 
     await this.saveGameAll(groupId, game);
     return e.reply(initResult.message, true);
@@ -1682,8 +1686,8 @@ export class WerewolfPlugin extends plugin {
     let preset = GAME_PRESETS[game.gameState.presetName] || GAME_PRESETS['default'];
 
     // 检查人数是否符合板子要求
-    if (preset.player_count && preset.player_count !== playerCount) {
-      await e.reply(`当前人数(${playerCount}人)不符合预设板子“${preset.name}”(${preset.player_count}人)的要求，将自动切换至默认配置。`);
+    if (preset.playerCount && (playerCount < preset.playerCount.min || playerCount > preset.playerCount.max)) {
+      await e.reply(`当前人数(${playerCount}人)不符合预设板子“${preset.name}”(${preset.playerCount.min}-${preset.playerCount.max}人)的要求，将自动切换至默认配置。`);
       preset = GAME_PRESETS['default'];
       game.gameState.presetName = 'default'; // 更新游戏状态中的板子名称
     }
