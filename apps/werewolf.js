@@ -1190,38 +1190,41 @@ class WerewolfGame {
   getWerewolfAttackTargetId() {
     const werewolfActions = this.gameState.nightActions['WEREWOLF'] || {};
 
-    const killTargets = {}; // 统计每个目标获得的刀数
+    // 使用 tempId 作为键来计票，避免 userId 的类型问题
+    const killTargets = {}; // 统计每个目标（按tempId）获得的刀数
     const actionValues = Object.values(werewolfActions);
 
     if (actionValues.length === 0) {
       console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - No werewolf actions recorded.`);
-      return null; // 明确返回 null
+      return null;
     }
 
     actionValues.forEach(action => {
-      // 防御性检查，确保 action 和 targetTempId 存在
       if (!action || !action.targetTempId) {
         console.warn(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Found an invalid action object:`, action);
         return;
       }
-      const target = this.players.find(p => p.tempId === action.targetTempId && p.isAlive);
+      // 查找时也用非严格比较 `==`，以防 action.targetTempId 是字符串
+      const target = this.players.find(p => p.tempId == action.targetTempId && p.isAlive);
       if (target) {
-        killTargets[target.userId] = (killTargets[target.userId] || 0) + 1;
+        // 使用 tempId 计票
+        killTargets[target.tempId] = (killTargets[target.tempId] || 0) + 1;
       } else {
         console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Target ${action.targetTempId} not found or not alive.`);
       }
     });
 
-    console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Vote counts:`, JSON.stringify(killTargets));
+    console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Vote counts (by tempId):`, JSON.stringify(killTargets));
 
     let maxVotes = 0;
-    let topCandidates = []; // 获得最高票数的候选人
-    for (const userId in killTargets) {
-      if (killTargets[userId] > maxVotes) {
-        maxVotes = killTargets[userId];
-        topCandidates = [userId];
-      } else if (killTargets[userId] === maxVotes && maxVotes > 0) {
-        topCandidates.push(userId);
+    let topCandidates = []; // 获得最高票数的候选人 (tempId)
+    // 这里的 tempIdKey 是从对象键中来的，所以是字符串
+    for (const tempIdKey in killTargets) {
+      if (killTargets[tempIdKey] > maxVotes) {
+        maxVotes = killTargets[tempIdKey];
+        topCandidates = [tempIdKey];
+      } else if (killTargets[tempIdKey] === maxVotes && maxVotes > 0) {
+        topCandidates.push(tempIdKey);
       }
     }
 
@@ -1229,16 +1232,31 @@ class WerewolfGame {
       console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - No valid targets were voted on. Result is null.`);
       return null; // 无人被刀
     }
+
+    let finalTargetTempId;
     if (topCandidates.length === 1) {
-      console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Unique target found: ${topCandidates[0]}`);
-      return topCandidates[0]; // 唯一目标
+      finalTargetTempId = topCandidates[0]; // 唯一目标
+    } else {
+      // 平票情况，随机选择一个
+      const randomIndex = Math.floor(Math.random() * topCandidates.length);
+      finalTargetTempId = topCandidates[randomIndex];
     }
 
-    // 平票情况，随机选择一个
-    const randomIndex = Math.floor(Math.random() * topCandidates.length);
-    const finalTarget = topCandidates[randomIndex];
-    console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Tied vote, randomly selected: ${finalTarget}`);
-    return finalTarget;
+    console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Tied vote or unique, selected tempId: ${finalTargetTempId}`);
+
+    // 根据最终的 tempId 找到玩家对象
+    // 使用非严格比较 `==` 因为 finalTargetTempId 是从对象键中来的字符串
+    const finalTargetPlayer = this.players.find(p => p.tempId == finalTargetTempId);
+
+    if (finalTargetPlayer) {
+      console.log(`[${PLUGIN_NAME}] [DEBUG] getWerewolfAttackTargetId - Final target userId: ${finalTargetPlayer.userId}`);
+      // 返回原始类型的 userId，确保类型正确
+      return finalTargetPlayer.userId;
+    } else {
+      // 这是一个不太可能发生的容错分支，但为了健壮性还是加上
+      console.error(`[${PLUGIN_NAME}] [FATAL] getWerewolfAttackTargetId - Could not find player with tempId ${finalTargetTempId} after vote counting.`);
+      return null;
+    }
   }
 
   /**
