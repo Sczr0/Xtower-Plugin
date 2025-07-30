@@ -375,15 +375,38 @@ class WerewolfGame {
        * @returns {object} 操作结果。
        */
       performAction: (game, witchPlayer, actionType, targetPlayerId) => {
-        if (actionType === 'save' && !game.potions.save) return { success: false, message: '你的解药已经用完了。' };
-        if (actionType === 'kill' && !game.potions.kill) return { success: false, message: '你的毒药已经用完了。' };
-        // 检查女巫是否已行动过，防止重复行动记录
-        if (game.gameState.nightActions[ROLES.WITCH]?.[witchPlayer.userId]) return { success: false, message: '你今晚已经行动过了。' };
+
+        // 统一检查玩家是否已经行动过
+        // 注意：这里应该检查 pendingNightActions，与 handleNightAction 中的逻辑保持一致
+        if (game.gameState.pendingNightActions.some(a => a.userId === witchPlayer.userId)) {
+          return { success: false, message: '你今晚已经行动过了。' };
+        }
 
         const targetPlayer = game.players.find(p => p.tempId === targetPlayerId && p.isAlive);
-        if (!targetPlayer) return { success: false, message: '目标玩家无效或已死亡。' };
+        if (!targetPlayer) {
+          return { success: false, message: '目标玩家无效或已死亡。' };
+        }
 
-        return { success: true, message: `[狼人杀] 已收到您的行动指令，请等待夜晚结束。` };
+        if (actionType === 'save') {
+          if (!game.potions.save) {
+            return { success: false, message: '你的解药已经用完了。' };
+          }
+          // 标记解药已使用
+          game.potions.save = false;
+          return { success: true, message: `你选择使用【解药】，目标是 ${targetPlayer.nickname}(${targetPlayer.tempId}号)。` };
+        }
+
+        if (actionType === 'kill') {
+          if (!game.potions.kill) {
+            return { success: false, message: '你的毒药已经用完了。' };
+          }
+          // 标记毒药已使用
+          game.potions.kill = false;
+          return { success: true, message: `你选择使用【毒药】，目标是 ${targetPlayer.nickname}(${targetPlayer.tempId}号)。` };
+        }
+
+        return { success: false, message: '无效的行动类型。' };
+        // --- FIX END ---
       }
     },
     [ROLES.GUARD]: {
