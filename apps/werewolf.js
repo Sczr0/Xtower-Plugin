@@ -1071,28 +1071,34 @@ class WerewolfGame {
   processVotes() {
     if (this.gameState.status !== 'day_vote') return { message: '非投票阶段，无法计票' };
 
-    // 记录上一个稳定状态是白天投票
-    this.gameState.lastStableStatus = 'day_vote'; 
+    // --- 新增代码：在这里记录上一个稳定状态 ---
+    this.gameState.lastStableStatus = 'day_vote';
+    // ------------------------------------------
 
     const currentDay = this.gameState.currentDay;
     const logEvent = (event) => this.gameState.eventLog.push({ day: currentDay, phase: 'day', ...event });
 
     // --- 计票逻辑---
+    // 首先筛选出所有有投票权的玩家，并计算总人数
     const voters = this.players.filter(p => p.isAlive && !p.tags.includes(TAGS.REVEALED_IDIOT));
     const totalVotersCount = voters.length;
 
     const voteCounts = {} // 记录每个玩家获得的票数
     const voteDetails = {} // 记录每个玩家被谁投票
 
+    // 使用上面筛选出的 voters 列表进行遍历
     voters.forEach(voter => {
       const targetTempId = this.gameState.votes[voter.userId];
+
+      // 判断投票权重，警长为1.5票，其他人为1票
       const voteWeight = (voter.userId === this.gameState.sheriffUserId) ? 1.5 : 1;
 
-      if (targetTempId && targetTempId !== '弃票') {
+      if (targetTempId && targetTempId !== '弃票') { // 如果投票给某个人
         voteCounts[targetTempId] = (voteCounts[targetTempId] || 0) + voteWeight;
         if (!voteDetails[targetTempId]) voteDetails[targetTempId] = [];
         voteDetails[targetTempId].push(`${voter.nickname}(${voter.tempId}号)`);
-      } else {
+      } else { // 如果是弃票
+        // 注意：弃票不计入权重，始终算1票
         voteCounts['弃票'] = (voteCounts['弃票'] || 0) + 1;
         if (!voteDetails['弃票']) voteDetails['弃票'] = [];
         voteDetails['弃票'].push(`${voter.nickname}(${voter.tempId}号)`);
@@ -1118,11 +1124,12 @@ class WerewolfGame {
         tiedPlayers.push(targetTempId);
       }
     }
-    
+
     // --- 处理出局玩家的逻辑 ---
     this.gameState.votes = {}; // 清空旧的投票记录
     let playerKickedToday = null;
-    
+
+    // 票数是否过半的校验
     if (tiedPlayers.length === 1 && maxVotes > totalVotersCount / 2) {
       const eliminatedPlayer = this.players.find(p => p.tempId === tiedPlayers[0]);
       if (eliminatedPlayer) {
@@ -1155,7 +1162,7 @@ class WerewolfGame {
           }
         }
       }
-    } else {
+    } else { //  统一处理所有无人出局的情况（票数未过半、平票、无人投票）
       if (tiedPlayers.length === 1 && maxVotes <= totalVotersCount / 2) {
         const targetPlayer = this.players.find(p => p.tempId === tiedPlayers[0]);
         voteSummary.push(`得票最高者 ${targetPlayer.nickname}(${targetPlayer.tempId}号) 的票数(${maxVotes})未超过总投票人数(${totalVotersCount})的一半，本轮无人出局。`);
@@ -1166,7 +1173,7 @@ class WerewolfGame {
         voteSummary.push("所有人都弃票或投票无效，本轮无人出局。");
       }
     }
-    
+
     const gameStatus = this.checkGameStatus();
     if (gameStatus.isEnd) {
       this.endGame(gameStatus.winner);
@@ -1175,6 +1182,7 @@ class WerewolfGame {
         winner: gameStatus.winner, finalRoles: this.getFinalRoles(), playerKicked: playerKickedToday
       };
     } else {
+      this.gameState.status = 'night_phase_1';
       return {
         success: true, summary: voteSummary.join('\n'), gameEnded: false, playerKicked: playerKickedToday
       };
