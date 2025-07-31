@@ -289,6 +289,7 @@ class WerewolfGame {
       sheriffUserId: null,         // 警长玩家的ID
       isSheriffElection: false,    // 是否正在进行警长竞选的总开关
       candidateList: [],         // 警长候选人列表 (存放userId)
+      initialCandidates: [],   // 初始上警玩家列表，用于判断投票权
       sheriffVotes: {},          // 警长投票的专门记录
       speakingOrder: [],       // 白天发言顺序
       currentSpeakerOrderIndex: -1, // 当前发言玩家在顺序中的索引
@@ -1058,6 +1059,15 @@ class WerewolfGame {
     }
 
     this.gameState.speakingOrder = orderedPlayers.map(p => p.userId);
+
+    // 新增：确保警长在最后发言
+    const sheriffId = this.gameState.sheriffUserId;
+    if (sheriffId && this.gameState.speakingOrder.includes(sheriffId)) {
+        const sheriffIndex = this.gameState.speakingOrder.indexOf(sheriffId);
+        this.gameState.speakingOrder.splice(sheriffIndex, 1);
+        this.gameState.speakingOrder.push(sheriffId);
+    }
+    
     this.gameState.currentSpeakerOrderIndex = -1;
   }
 
@@ -1085,9 +1095,11 @@ class WerewolfGame {
 
     // 计票
     for (const voterId in votes) {
-      const targetId = votes[voterId];
-      if (voteCounts.hasOwnProperty(targetId)) {
-        voteCounts[targetId]++;
+      if (!this.gameState.initialCandidates.includes(voterId)) { // 检查投票者是否为初始候选人
+        const targetId = votes[voterId];
+        if (voteCounts.hasOwnProperty(targetId)) {
+          voteCounts[targetId]++;
+        }
       }
     }
 
@@ -1117,9 +1129,19 @@ class WerewolfGame {
     if (maxVotes === 0 || topCandidates.length === 0) {
       return { summary, sheriffElected: false, isTie: false }; // 无人投票
     }
+    // 新增：获取总投票人数
+    const totalVotersCount = Object.keys(votes).length;
+
     if (topCandidates.length === 1) {
-      this.gameState.sheriffUserId = topCandidates[0];
-      return { summary, sheriffElected: true, isTie: false, sheriffId: topCandidates[0] }; // 唯一警长
+      // 检查是否过半
+      if (maxVotes > totalVotersCount / 2) {
+        this.gameState.sheriffUserId = topCandidates[0];
+        return { summary, sheriffElected: true, isTie: false, sheriffId: topCandidates[0] }; // 唯一警长
+      } else {
+        // 未过半，视为流局
+        const updatedSummary = summary + `\n得票最高者 ${this.getPlayerInfo(topCandidates[0]).nickname}(${this.getPlayerInfo(topCandidates[0]).tempId}号) 的票数(${maxVotes})未超过总投票人数(${totalVotersCount})的一半，警长竞选流局。`;
+        return { summary: updatedSummary, sheriffElected: false, isTie: false };
+      }
     }
 
     // 平票，更新候选人列表为平票者，为PK做准备
@@ -1456,7 +1478,7 @@ export class WerewolfPlugin extends plugin {
         { reg: '^#上警$', fnc: 'handleSheriffSignup' },
         { reg: '^#退水$', fnc: 'handleSheriffWithdraw' },
         { reg: '^#投警长\\s*(\\d+)$', fnc: 'handleSheriffVote' },
-        { reg: '^#移交警徽\\s*(\\d+)$', fnc: 'handleSheriffPassBadge', permission: 'private' },
+        { reg: '^#(移交警徽|撕掉警徽)\\s*(\\d*)$', fnc: 'handleSheriffPassBadge', permission: 'private' },
         { reg: '^#?(结束发言|过)$', fnc: 'handleEndSpeech' },
         { reg: '^#投票\\s*(\\d+|弃票)$', fnc: 'handleVote' },
         { reg: '^#开枪\\s*(\\d+)$', fnc: 'handleHunterShoot', permission: 'private' },
@@ -2732,7 +2754,20 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<void>}
    */
   async processSheriffSignupEnd(groupId, game) {
+    game.gameState.initialCandidates = [...game.gameState.candidateList];
     const candidates = game.gameState.candidateList;
+    const alivePlayersCount = game.players.filter(p => p.isAlive).length;
+
+    // 新增情况：所有人都上警
+    if (candidates.length === alivePlayersCount) {
+        game.gameState.isSheriffElection = false; // 警长竞选流程结束
+        await this.sendSystemGroupMsg(groupId, "所有玩家均参与警长竞选，警徽流失。");
+        // 直接进入白天发言阶段
+        game.gameState.status = 'day_speak';
+        await this.saveGameAll(groupId, game);
+        await this.transitionToNextPhase(groupId, game, 'day_speak');
+        return;
+    }
 
     // 情况一：无人上警
     if (candidates.length === 0) {
@@ -2791,9 +2826,10 @@ export class WerewolfPlugin extends plugin {
     game.gameState.currentSpeakerOrderIndex = -1;
 
     // 3. 发布公告
-    const candidateInfos = game.gameState.speakingOrder.map(userId =>
-      `${game.getPlayerInfo(userId).nickname}(${game.getPlayerInfo(userId).tempId}号)`
-    ).join('、');
+    const candidateInfos = game.gameState.speakingOrder.map(userId => {
+      const playerInfo = game.getPlayerInfo(userId);
+      return playerInfo ? `${playerInfo.nickname}(${playerInfo.tempId}号)` : '';
+    }).filter(info => info).join('、');
     await this.sendSystemGroupMsg(groupId, `--- 警长竞选发言 ---\n上警玩家为：${candidateInfos}。\n现在将按照此顺序进行竞选发言。`);
 
     // 4. 【关键】调用游戏核心逻辑，移动到第一个发言人
@@ -3103,7 +3139,7 @@ export class WerewolfPlugin extends plugin {
     await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
     await this.saveGameAll(groupId, game);
 
-    const announcement = `警长倒牌！请警长在 ${duration / 1000} 秒内私聊我【#移交警徽 编号】来选择新的警长。\n超时或移交给非存活玩家，警徽将会被撕毁。`;
+    const announcement = `警长倒牌！请警长在 ${duration / 1000} 秒内私聊我【#移交警徽 编号】或【#撕掉警徽】。\n选择移交警徽，请指定一位存活玩家；选择撕掉警徽，本局游戏将不再有警长。\n超时或移交给非存活玩家，警徽将会被撕毁。`;
     // 这个消息需要同时发给群里和私聊给死去的警长
     await this.sendSystemGroupMsg(groupId, announcement);
     await this.sendDirectMessage(deadSheriffId, announcement, groupId);
@@ -3124,28 +3160,47 @@ export class WerewolfPlugin extends plugin {
       return;
     }
 
-    const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0');
-    if (!targetTempId) return e.reply("指令格式错误，请发送 #移交警徽 编号", true);
+    const match = e.msg.match(/^#(移交警徽|撕掉警徽)\s*(\d*)$/);
+    if (!match) return; // In case of invalid command format
 
-    const targetPlayer = game.players.find(p => p.tempId === targetTempId && p.isAlive);
-    if (!targetPlayer) {
-      return e.reply("移交目标不存在或已出局，请重新选择。", true);
+    const action = match[1];
+    const targetTempId = match[2] ? match[2].padStart(2, '0') : null;
+
+    if (action === '撕掉警徽') {
+        game.gameState.sheriffUserId = null;
+        const oldSheriffInfo = game.getPlayerInfo(e.user_id);
+        await this.sendSystemGroupMsg(groupId, `${oldSheriffInfo.nickname} 决定撕掉警徽，本局游戏将不再有警长。`);
+        
+        game.gameState.eventLog.push({
+            day: game.gameState.currentDay,
+            phase: 'day',
+            type: 'SHERIFF_BADGE_DESTROYED',
+            actor: oldSheriffInfo,
+        });
+
+    } else if (action === '移交警徽') {
+        if (!targetTempId) return e.reply("指令格式错误，请发送 #移交警徽 编号", true);
+
+        const targetPlayer = game.players.find(p => p.tempId === targetTempId && p.isAlive);
+        if (!targetPlayer) {
+            return e.reply("移交目标不存在或已出局，请重新选择。", true);
+        }
+
+        // 更新警长
+        game.gameState.sheriffUserId = targetPlayer.userId;
+        const oldSheriffInfo = game.getPlayerInfo(e.user_id);
+        const newSheriffInfo = game.getPlayerInfo(targetPlayer.userId);
+
+        await this.sendSystemGroupMsg(groupId, `${oldSheriffInfo.nickname} 将警徽移交给了 ${newSheriffInfo.nickname}(${newSheriffInfo.tempId}号)！`);
+
+        game.gameState.eventLog.push({
+            day: game.gameState.currentDay,
+            phase: 'day', // 移交通常发生在白天死亡后
+            type: 'SHERIFF_PASS_BADGE',
+            actor: oldSheriffInfo,
+            target: newSheriffInfo
+        });
     }
-
-    // 更新警长
-    game.gameState.sheriffUserId = targetPlayer.userId;
-    const oldSheriffInfo = game.getPlayerInfo(e.user_id);
-    const newSheriffInfo = game.getPlayerInfo(targetPlayer.userId);
-
-    await this.sendSystemGroupMsg(groupId, `${oldSheriffInfo.nickname} 将警徽移交给了 ${newSheriffInfo.nickname}(${newSheriffInfo.tempId}号)！`);
-
-    game.gameState.eventLog.push({
-      day: game.gameState.currentDay,
-      phase: 'day', // 移交通常发生在白天死亡后
-      type: 'SHERIFF_PASS_BADGE',
-      actor: oldSheriffInfo,
-      target: newSheriffInfo
-    });
 
     // 警徽移交完毕，流程继续
     await this.continueAfterDeathEvent(groupId, game);
