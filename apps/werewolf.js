@@ -1557,7 +1557,7 @@ export class WerewolfPlugin extends plugin {
 
   /**
      * 处理 #创建狼人杀 命令。
-     * @param {object} e - 消息事件对象，框架会自动在 e.match 中附加正则匹配结果。
+     * @param {object} e - 消息事件对象。
      * @returns {Promise<boolean>} 是否成功处理。
      */
   async createGame(e) {
@@ -1571,11 +1571,13 @@ export class WerewolfPlugin extends plugin {
       return e.reply(`本群已有游戏（状态: ${game.gameState.status}）。\n请先 #结束狼人杀。`);
     }
 
-    console.log(`[${PLUGIN_NAME}] Debug: e =`, e);
-    // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
-    // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
-    const presetNameInput = e.match && e.match[1] ? e.match[1].trim() : 'default';
+    // 直接从消息内容中解析板子名称
+    const msg = e.msg || e.raw_message || '';
+    const match = msg.match(/^#创建狼人杀(?:\s+(.+))?$/);
+    const presetNameInput = match && match[1] ? match[1].trim() : 'default';
+    console.log(`[${PLUGIN_NAME}] Debug: msg = '${msg}'`);
     console.log(`[${PLUGIN_NAME}] Debug: presetNameInput = '${presetNameInput}'`);
+    
     // 检查输入的板子名称是否存在于预设中，如果不存在则使用 'default'
     const chosenPresetName = GAME_PRESETS[presetNameInput] ? presetNameInput : 'default';
     console.log(`[${PLUGIN_NAME}] Debug: chosenPresetName = '${chosenPresetName}'`);
