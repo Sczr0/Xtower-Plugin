@@ -1399,7 +1399,7 @@ export class WerewolfPlugin extends plugin {
       event: 'message',
       priority: 50,
       rule: [
-        { reg: '^#创建狼人杀(?:\\s+(.*))?$', fnc: 'createGame' },
+        { reg: '^#创建狼人杀(?:\\s+(.+))?$', fnc: 'createGame' },
         { reg: '^#加入狼人杀$', fnc: 'joinGame' },
         { reg: '^#退出狼人杀$', fnc: 'leaveGame' },
         { reg: '^#开始狼人杀$', fnc: 'startGame' },
