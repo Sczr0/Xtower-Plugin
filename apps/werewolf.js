@@ -22,7 +22,7 @@ const GAME_PRESETS = {
     name: '默认板子 (6-15人)',
     playerCount: { min: 3, max: 15 },
     roles: null,
-    hasSheriff: false,
+    hasSheriff: true,
     ruleset: '屠城' // 默认规则是屠城
   },
   '屠边局': {
