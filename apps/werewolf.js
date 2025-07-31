@@ -1496,7 +1496,7 @@ export class WerewolfPlugin extends plugin {
     // 游戏阶段持续时间常量
     this.WEREWOLF_PHASE_DURATION = 20 * 1000; // 狼人行动阶段时长
     this.WITCH_ACTION_DURATION = 10 * 1000;   // 女巫单独行动阶段时长
-    this.SHERIFF_SIGNUP_DURATION = 60 * 1000;   // 警长竞选报名时长
+    this.SHERIFF_SIGNUP_DURATION = 20 * 1000;   // 警长竞选报名时长
     this.SHERIFF_SPEECH_DURATION = 60 * 1000;   // 警长竞选发言时长
     this.SHERIFF_VOTE_DURATION = 45 * 1000;     // 警长竞选投票时长
     this.SPEECH_DURATION = 60 * 1000;         // 白天发言时长
@@ -2786,14 +2786,18 @@ export class WerewolfPlugin extends plugin {
       game.gameState.sheriffUserId = newSheriffId; // 直接当选
       game.gameState.isSheriffElection = false; // 警长竞选流程结束
       
-      const sheriffInfo = game.getPlayerInfo(newSheriffId);
-      
+      const sheriffInfoStr = game.getPlayerInfo(newSheriffId);
+      const sheriffPlayer = game.getPlayerObject(newSheriffId);
+
       // 进入等待警长设置发言顺序的状态
       game.gameState.status = 'sheriff_sets_order';
       await this.saveGameAll(groupId, game);
       
-      await this.sendSystemGroupMsg(groupId, `只有 ${sheriffInfo.nickname}(${sheriffInfo.tempId}号) 一人竞选，TA将自动当选为本局游戏的警长！`);
-      await this.sendSystemGroupMsg(groupId, `@${sheriffInfo.nickname} 请在60秒内决定发言顺序：\n- 发送【#顺序】从你开始顺序发言\n- 发送【#逆序】从你开始逆序发言`);
+      await this.sendSystemGroupMsg(groupId, `只有 ${sheriffInfoStr} 一人竞选，TA将自动当选为本局游戏的警长！`);
+      // at的时候需要用nickname，所以用 getPlayerObject
+      if (sheriffPlayer) {
+        await this.sendSystemGroupMsg(groupId, `@${sheriffPlayer.nickname} 请在60秒内决定发言顺序：\n- 发送【#顺序】从你开始顺序发言\n- 发送【#逆序】从你开始逆序发言`);
+      }
 
       // 设置一个定时器，如果警长超时未选择，则默认顺序发言
       this.setPhaseTimer(groupId, game, 60 * 1000, async () => {
@@ -2827,9 +2831,9 @@ export class WerewolfPlugin extends plugin {
 
     // 3. 发布公告
     const candidateInfos = game.gameState.speakingOrder.map(userId => {
-      const playerInfo = game.getPlayerInfo(userId);
-      return playerInfo ? `${playerInfo.nickname}(${playerInfo.tempId}号)` : '';
-    }).filter(info => info).join('、');
+      // getPlayerInfo a-const-string，所以直接返回
+      return game.getPlayerInfo(userId);
+    }).filter(info => info && info !== '未知玩家').join('、');
     await this.sendSystemGroupMsg(groupId, `--- 警长竞选发言 ---\n上警玩家为：${candidateInfos}。\n现在将按照此顺序进行竞选发言。`);
 
     // 4. 【关键】调用游戏核心逻辑，移动到第一个发言人
