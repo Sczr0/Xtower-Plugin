@@ -1574,13 +1574,11 @@ export class WerewolfPlugin extends plugin {
     // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
     // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
     const presetNameInput = e.match && e.match[1] ? e.match[1].trim() : 'default';
-    // 规范化板子名称，例如将“预女猎白”映射到“预女猎白”键
-    const normalizedPresetName = Object.keys(GAME_PRESETS).find(key =>
-      key.toLowerCase() === presetNameInput.toLowerCase()
-    ) || 'default';
+    // 检查输入的板子名称是否存在于预设中，如果不存在则使用 'default'
+    const chosenPresetName = GAME_PRESETS[presetNameInput] ? presetNameInput : 'default';
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname);
-    const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, normalizedPresetName);
+    const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, chosenPresetName);
 
     await this.saveGameAll(groupId, game);
     return e.reply(initResult.message, true);
@@ -1687,9 +1685,9 @@ export class WerewolfPlugin extends plugin {
 
     // 检查人数是否符合板子要求
     if (preset.playerCount && (playerCount < preset.playerCount.min || playerCount > preset.playerCount.max)) {
-      await e.reply(`当前人数(${playerCount}人)不符合预设板子“${preset.name}”(${preset.playerCount.min}-${preset.playerCount.max}人)的要求，将自动切换至默认配置。`);
-      preset = GAME_PRESETS['default'];
-      game.gameState.presetName = 'default'; // 更新游戏状态中的板子名称
+      game.gameState.status = 'waiting'; // 状态回滚
+      await this.saveGameField(groupId, game, 'gameState');
+      return e.reply(`无法开始游戏！当前人数(${playerCount}人)不符合预设板子“${preset.name}”(${preset.playerCount.min}-${preset.playerCount.max}人)的要求。`);
     }
 
     // 把板子配置中的胜利规则，设置到当前游戏实例上
