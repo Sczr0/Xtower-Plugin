@@ -1571,6 +1571,7 @@ export class WerewolfPlugin extends plugin {
       return e.reply(`本群已有游戏（状态: ${game.gameState.status}）。\n请先 #结束狼人杀。`);
     }
 
+    console.log(`[${PLUGIN_NAME}] Debug: e =`, e);
     // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
     // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
     const presetNameInput = e.match && e.match[1] ? e.match[1].trim() : 'default';
