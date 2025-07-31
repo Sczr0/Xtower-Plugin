@@ -2637,6 +2637,9 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<boolean>}
    */
   async handleSheriffSignup(e) {
+    if (e.is_group) {
+      return e.reply('为了防止暴露身份，请私聊我发送【#上警】来参与竞选。', true);
+    }
     // 1. 获取当前游戏实例
     const gameInfo = await this.findUserActiveGame(e.user_id);
     if (!gameInfo) return; // 如果玩家不在任何游戏中，则不作响应
@@ -2654,12 +2657,13 @@ export class WerewolfPlugin extends plugin {
     // 4. 根据处理结果，给玩家反馈
     if (result.success) {
       // 成功上警，私聊回复
-      await e.reply(result.message, true); // at发送者并回复
-      // 也可以考虑在群里发一个公告
-      await this.sendSystemGroupMsg(groupId, `${e.sender.card} (${result.player.tempId}号) 已上警！`);
+      await e.reply(result.message, false); //私聊消息不需要at
+      // 在群里发一个公告
+      const player = result.player;
+      await this.sendSystemGroupMsg(groupId, `「${player.nickname}」(${player.tempId}号) 已上警！`);
     } else {
       // 如果上警失败（比如重复上警），则私聊回复他原因
-      return e.reply(result.message, true);
+      return e.reply(result.message, false);
     }
 
     // 5. 保存游戏状态的变更
@@ -2735,14 +2739,23 @@ export class WerewolfPlugin extends plugin {
       const newSheriffId = candidates[0];
       game.gameState.sheriffUserId = newSheriffId; // 直接当选
       game.gameState.isSheriffElection = false; // 警长竞选流程结束
-
+      
       const sheriffInfo = game.getPlayerInfo(newSheriffId);
-      await this.sendSystemGroupMsg(groupId, `只有 ${sheriffInfo.nickname}(${sheriffInfo.tempId}号) 一人竞选，TA将自动当选为本局游戏的警长！`);
-
-      // 同样，直接进入正常的白天发言阶段
-      game.gameState.status = 'day_speak';
+      
+      // 进入等待警长设置发言顺序的状态
+      game.gameState.status = 'sheriff_sets_order';
       await this.saveGameAll(groupId, game);
-      await this.transitionToNextPhase(groupId, game, 'day_speak');
+      
+      await this.sendSystemGroupMsg(groupId, `只有 ${sheriffInfo.nickname}(${sheriffInfo.tempId}号) 一人竞选，TA将自动当选为本局游戏的警长！`);
+      await this.sendSystemGroupMsg(groupId, `@${sheriffInfo.nickname} 请在60秒内决定发言顺序：\n- 发送【#顺序】从你开始顺序发言\n- 发送【#逆序】从你开始逆序发言`);
+
+      // 设置一个定时器，如果警长超时未选择，则默认顺序发言
+      this.setPhaseTimer(groupId, game, 60 * 1000, async () => {
+          await this.sendSystemGroupMsg(groupId, "警长超时未选择，默认采用顺序发言。");
+          game.setSpeakingOrder(game.players.findIndex(p => p.userId === newSheriffId), 'asc');
+          await this.transitionToNextPhase(groupId, game, 'day_speak');
+      });
+      
       return;
     }
 
@@ -2890,8 +2903,18 @@ export class WerewolfPlugin extends plugin {
         actor: sheriffInfo
       });
 
-      // 警长诞生后，进入正常的白天发言阶段
-      await this.transitionToNextPhase(groupId, game, 'day_speak');
+      // 进入等待警长设置发言顺序的状态
+      game.gameState.status = 'sheriff_sets_order';
+      await this.saveGameAll(groupId, game);
+
+      await this.sendSystemGroupMsg(groupId, `@${sheriffInfo.nickname} 请在60秒内决定发言顺序：\n- 发送【#顺序】从你开始顺序发言\n- 发送【#逆序】从你开始逆序发言`);
+
+      // 设置一个定时器，如果警长超时未选择，则默认顺序发言
+      this.setPhaseTimer(groupId, game, 60 * 1000, async () => {
+          await this.sendSystemGroupMsg(groupId, "警长超时未选择，默认采用顺序发言。");
+          game.setSpeakingOrder(game.players.findIndex(p => p.userId === result.sheriffId), 'asc');
+          await this.transitionToNextPhase(groupId, game, 'day_speak');
+      });
 
     } else if (result.isTie) {
       // 【情况二】出现平票，需要进行PK
@@ -2912,6 +2935,36 @@ export class WerewolfPlugin extends plugin {
   }
 
   /**
+   * 处理警长设置发言顺序
+   * @param {object} e - 消息事件对象。
+   */
+  async handleSheriffSetOrder(e) {
+    const gameInfo = await this.findUserActiveGame(e.user_id);
+    if (!gameInfo) return;
+    const game = gameInfo.instance;
+    const groupId = gameInfo.groupId;
+
+    if (game.gameState.status !== 'sheriff_sets_order') {
+      return; // 不是设置顺序的阶段
+    }
+
+    if (e.user_id !== game.gameState.sheriffUserId) {
+      return e.reply("你不是警长，无法决定发言顺序。", true);
+    }
+    
+    this.clearPhaseTimer(groupId); // 清除超时定时器
+
+    const order = e.msg.includes('#顺序') ? 'asc' : 'desc';
+    const sheriffIndex = game.players.findIndex(p => p.userId === game.gameState.sheriffUserId);
+    
+    game.setSpeakingOrder(sheriffIndex, order);
+    
+    await this.sendSystemGroupMsg(groupId, `警长选择了【${order === 'asc' ? '顺序' : '逆序'}】发言。`);
+    
+    await this.transitionToNextPhase(groupId, game, 'day_speak');
+  }
+
+  /**
    * 宣布当前发言玩家并设置发言计时器。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
@@ -2928,6 +2981,11 @@ export class WerewolfPlugin extends plugin {
       currentPhaseDuration = this.LAST_WORDS_DURATION;
     } else {
       return; // 如果不是任何发言阶段，则直接退出
+    }
+
+    // 检查当前发言人是否是警长，如果是，则发言时间增加30秒
+    if (game.gameState.currentSpeakerUserId === game.gameState.sheriffUserId) {
+      currentPhaseDuration += 30 * 1000;
     }
 
     const speakerId = game.gameState.currentSpeakerUserId;
