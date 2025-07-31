@@ -2583,13 +2583,18 @@ export class WerewolfPlugin extends plugin {
     } else if (result.needsWolfKingClaw) {
       await this.startWolfKingClawPhase(groupId, game);
     } else {
+      console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 进入分支决策。currentDay=${game.gameState.currentDay}, hasSheriff=${game.gameState.hasSheriff}, sheriffUserId=${game.gameState.sheriffUserId}, deadPlayers=${result.deadPlayers.length}`);
       if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
+        console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 条件满足，直接进入警长竞选流程。`);
         await this.startSheriffElectionPhase(groupId, game);
       } else {
+        console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 条件不满足，进入常规死亡/平安夜处理流程。`);
         game.gameState.lastStableStatus = game.gameState.status;
         if (result.deadPlayers && result.deadPlayers.length > 0) {
+          console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 检测到死者，进入遗言阶段。`);
           await this.startLastWordsPhase(groupId, game);
         } else {
+          console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 平安夜，进入白天发言阶段。`);
           await this.transitionToNextPhase(groupId, game, 'day_speak');
         }
       }
