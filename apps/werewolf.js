@@ -1964,8 +1964,15 @@ export class WerewolfPlugin extends plugin {
     if (nextSpeakerUserId) {
       await this.announceAndSetSpeechTimer(groupId, game, e); // 宣布并设置下一个发言人的计时器
     } else {
-      await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
-      await this.startVotingPhase(groupId, game, e); // 进入投票阶段
+      // 根据当前发言阶段，决定下一步操作
+      if (game.gameState.status === 'last_words') {
+        await this.sendSystemGroupMsg(groupId, "遗言发表完毕。");
+        await this.continueAfterDeathEvent(groupId, game);
+      } else {
+        // 对于白天发言或警长竞选发言，结束后进入投票
+        await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
+        await this.startVotingPhase(groupId, game, e);
+      }
     }
   }
 
@@ -3168,11 +3175,11 @@ export class WerewolfPlugin extends plugin {
 
         if (unvotedPlayers.length > 0) {
           let reminderMsg = [
-            e.bot.segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
+            Bot.segment.text('【投票提醒】投票时间剩余15秒，请以下玩家尽快投票：\n')
           ];
           unvotedPlayers.forEach(p => {
-            reminderMsg.push(e.bot.segment.at(p.userId));
-            reminderMsg.push(e.bot.segment.text(' '));
+            reminderMsg.push(Bot.segment.at(p.userId));
+            reminderMsg.push(Bot.segment.text(' '));
           });
           await this.sendSystemGroupMsg(groupId, reminderMsg);
         }
@@ -3191,11 +3198,15 @@ export class WerewolfPlugin extends plugin {
    */
   async processVoteEnd(groupId, game) {
     game = await this.getGameInstance(groupId); // 确认我们操作的是最新的游戏实例
-    if (!game || game.gameState.status !== 'day_vote') return
+    if (!game || game.gameState.status !== 'day_vote') return;
+    console.log(`[${PLUGIN_NAME}] [DEBUG] Entering processVoteEnd for group ${groupId}.`);
+
     game.gameState.deadline = null
     await this.sendSystemGroupMsg(groupId, "投票时间结束，正在计票...")
 
     const result = game.processVotes() // 结算投票
+    console.log(`[${PLUGIN_NAME}] [DEBUG] processVotes result for group ${groupId}:`, JSON.stringify(result));
+
 
     // 这里先置空，确保只有本轮产生的死者
     game.gameState.recentlyDeceased = [];
@@ -3209,8 +3220,11 @@ export class WerewolfPlugin extends plugin {
       console.log(`[${PLUGIN_NAME}] [DEBUG] Idiot revealed, saved player data for group ${groupId}`);
     }
 
-    await this.saveGameAll(groupId, game)
-    await this.sendSystemGroupMsg(groupId, result.summary)
+    await this.saveGameAll(groupId, game);
+    console.log(`[${PLUGIN_NAME}] [DEBUG] About to send vote summary for group ${groupId}.`);
+    await this.sendSystemGroupMsg(groupId, result.summary);
+    console.log(`[${PLUGIN_NAME}] [DEBUG] Finished sending vote summary for group ${groupId}.`);
+
 
     const playerKicked = result.playerKicked;
 
