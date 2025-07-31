@@ -267,7 +267,7 @@ class WerewolfGame {
      * @param {object} presets - 【新增】游戏预设配置 (即 GAME_PRESETS)。
      * @param {object} initialData - 初始游戏数据，用于从Redis加载时重建游戏。
      */
-  constructor(presets, initialData = {}) {
+  constructor(presets, initialData = {}, pluginInstance) { // 增加 pluginInstance 参数
     // 将传入的“板子菜单”保存到游戏实例中
     this.presets = presets;
     this.players = initialData.players || []
@@ -302,6 +302,44 @@ class WerewolfGame {
     this.potions = initialData.potions || { save: true, kill: true } // 女巫药剂状态
     this.userGroupMap = initialData.userGroupMap || {} // 用户ID到群组ID的映射
     this.addPlayerPromise = Promise.resolve() // 用于串行化玩家加入操作
+
+    // 状态机：用于管理复杂、互斥的临时状态 (如死亡结算)
+    this.fsm = new StateMachine({
+      init: 'none', // 初始状态，表示状态机当前未接管流程
+      data: {
+        game: this, // 将游戏实例传递给状态机，方便在钩子中通过 this.game 访问游戏对象
+        plugin: pluginInstance, // 传入 WerewolfPlugin 实例
+      },
+      states: [
+        'none',                  // 默认状态，表示状态机不处理任何流程
+        'night_result_announcement', // 夜晚结算：公布夜晚死讯
+        'event_hunter_shoot',    // 夜晚结算：猎人开枪阶段
+        'event_pass_badge',      // 夜晚结算：警长移交警徽阶段
+        'day_last_words',        // 白天发言：遗言阶段
+        // 后续可能增加其他状态，例如白狼王自爆流程等
+      ],
+      transitions: [
+        { name: 'processNightResult', from: 'none', to: 'night_result_announcement' }, // 从无状态到夜晚结算
+        { name: 'goto_hunter_shoot', from: 'night_result_announcement', to: 'event_hunter_shoot' },
+        { name: 'goto_pass_badge', from: 'night_result_announcement', to: 'event_pass_badge' },
+        { name: 'goto_last_words', from: ['night_result_announcement', 'event_hunter_shoot', 'event_pass_badge'], to: 'day_last_words' },
+        { name: 'night_end', from: ['event_hunter_shoot', 'event_pass_badge', 'day_last_words'], to: 'none' }, // 死亡事件处理完毕，回到无状态
+      ],
+      methods: {
+        onEnterNone: async function () { // 添加 async 因为 continueAfterDeathEvent 是 async 函数
+          // 从 plugin 实例调用方法，并传入 game 实例
+          await this.plugin.continueAfterDeathEvent(this.game.gameState.groupId, this.game);
+        },
+        onEnterEvent_hunter_shoot: function () {
+          // 从 plugin 实例调用方法，并传入 game 实例
+          this.plugin.startHunterShootPhase(this.game.gameState.groupId, this.game);
+        },
+        onEnterDay_last_words: function () {
+          // 从 plugin 实例调用方法，并传入 game 实例
+          this.plugin.startLastWordsPhase(this.game.gameState.groupId, this.game);
+        },
+      },
+    });
   }
 
   /**
@@ -494,7 +532,6 @@ class WerewolfGame {
       eventLog: [],
       deadline: null,
       hasPermission: false,
-      lastStableStatus: null,
       presetName: presetName || 'default',
     };
     this.gameState.pendingNightActions = [];
@@ -1162,9 +1199,6 @@ class WerewolfGame {
   processVotes() {
     if (this.gameState.status !== 'day_vote') return { message: '非投票阶段，无法计票' };
 
-    // --- 新增代码：在这里记录上一个稳定状态 ---
-    this.gameState.lastStableStatus = 'day_vote';
-    // ------------------------------------------
 
     const currentDay = this.gameState.currentDay;
     const logEvent = (event) => this.gameState.eventLog.push({ day: currentDay, phase: 'day', ...event });
@@ -1546,8 +1580,8 @@ export class WerewolfPlugin extends plugin {
         GameCleaner.registerGame(groupId, this);
       }
     } else if (createIfNotExist && hostUserId && hostNickname) {
-      // 创建新实例时，传入预设配置
-      game = new WerewolfGame(GAME_PRESETS);
+      // 创建新实例时，传入预设配置和当前的 WerewolfPlugin 实例
+      game = new WerewolfGame(GAME_PRESETS, {}, this); // 传入 this (WerewolfPlugin 实例)
       this.gameInstances.set(groupId, game);
       GameCleaner.registerGame(groupId, this);
     }
@@ -2110,7 +2144,7 @@ export class WerewolfPlugin extends plugin {
 
     const hunterInfo = game.getPlayerInfo(userId);
     const targetInfo = targetPlayer ? game.getPlayerInfo(targetPlayer.userId) : '一个空位';
-    const deathPhase = game.gameState.lastStableStatus === 'day_vote' ? 'day' : 'night';
+    const deathPhase = game.fsm.state === 'day_last_words' ? 'day' : 'night';
     game.gameState.eventLog.push({
       day: game.gameState.currentDay,
       phase: deathPhase,
@@ -2124,8 +2158,8 @@ export class WerewolfPlugin extends plugin {
     // 保存所有状态变更（包括新死者和事件日志）
     await this.saveGameAll(gameInfo.groupId, game);
 
-    // 直接调用后续流程，它会根据正确的 lastStableStatus 决定下一步。
-    await this.continueAfterDeathEvent(gameInfo.groupId, game);
+    // 交给状态机处理后续流程
+    await game.fsm.goto_last_words();
   }
 
   /**
@@ -2205,9 +2239,9 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(groupId, game, gameStatus.winner);
     } else {
-      game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
-      await this.saveGameAll(groupId, game);
-      await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      // 普通狼人自爆后，如果游戏未结束，直接进入夜晚（回到 none 状态）
+      await game.fsm.night_end();
+      await this.transitionToNextPhase(groupId, game, 'night_phase_1'); // 确保进入夜晚第一阶段
     }
   }
 
@@ -2261,9 +2295,9 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(groupId, game, gameStatus.winner);
     } else {
-      game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
-      await this.saveGameAll(groupId, game);
-      await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      // 狼王技能发动后，如果有新的死者，进入遗言阶段
+      game.gameState.recentlyDeceased = [{ userId: targetPlayer.userId, role: targetPlayer.role }];
+      await game.fsm.goto_last_words();
     }
   }
 
@@ -2625,19 +2659,21 @@ export class WerewolfPlugin extends plugin {
 
     await this.sendSystemGroupMsg(groupId, result.summary); // 公布夜晚摘要
 
+    // 状态机接管：首先触发状态机的总入口
+    await game.fsm.processNightResult();
+
     // 后续的逻辑（检查游戏是否结束、进入下一阶段）会基于这个已经保存的最新 game 状态进行判断
     const deadSheriff = result.deadPlayers.find(p => p.userId === game.gameState.sheriffUserId);
 
     if (result.gameEnded) {
+      await game.fsm.night_end(); // 游戏结束，状态机回到 none
       await this.endGameFlow(groupId, game, result.winner);
     } else if (deadSheriff) {
-      game.gameState.lastStableStatus = game.gameState.status;
       await this.startSheriffPassBadgePhase(groupId, game, deadSheriff.userId);
     } else if (result.needsHunterShoot) {
-      game.gameState.lastStableStatus = game.gameState.status;
-      await this.startHunterShootPhase(groupId, game);
+      await game.fsm.goto_hunter_shoot(); // 交给状态机处理猎人开枪
     } else if (result.needsWolfKingClaw) {
-      await this.startWolfKingClawPhase(groupId, game);
+      await this.startWolfKingClawPhase(groupId, game); // 狼王技能暂不纳入状态机
     } else {
       console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 进入分支决策。currentDay=${game.gameState.currentDay}, hasSheriff=${game.gameState.hasSheriff}, sheriffUserId=${game.gameState.sheriffUserId}, deadPlayers=${result.deadPlayers.length}`);
       if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
@@ -2645,12 +2681,12 @@ export class WerewolfPlugin extends plugin {
         await this.startSheriffElectionPhase(groupId, game);
       } else {
         console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 条件不满足，进入常规死亡/平安夜处理流程。`);
-        game.gameState.lastStableStatus = game.gameState.status;
+        // 只有在需要遗言时才进入遗言阶段
         if (result.deadPlayers && result.deadPlayers.length > 0) {
-          console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 检测到死者，进入遗言阶段。`);
-          await this.startLastWordsPhase(groupId, game);
+          await game.fsm.goto_last_words(); // 交给状态机处理遗言阶段
         } else {
-          console.log(`[${PLUGIN_NAME}] [DEBUG] processNightEnd: 平安夜，进入白天发言阶段。`);
+          // 平安夜，直接进入白天发言阶段，状态机回到 none
+          await game.fsm.night_end();
           await this.transitionToNextPhase(groupId, game, 'day_speak');
         }
       }
@@ -3266,8 +3302,22 @@ export class WerewolfPlugin extends plugin {
       });
     }
 
-    // 警徽移交完毕，流程继续
-    await this.continueAfterDeathEvent(groupId, game);
+    // 警徽移交完毕，继续执行夜晚结算的后续流程（判断猎人、狼王、遗言或进入白天）
+    // 清理可能存在的计时器和deadline
+    this.clearPhaseTimer(groupId);
+    game.gameState.deadline = null;
+    await redis.zRem(DEADLINE_KEY, String(groupId));
+
+    // 检查游戏是否结束
+    const gameStatus = game.checkGameStatus();
+    if (gameStatus.isEnd) {
+      await this.endGameFlow(groupId, game, gameStatus.winner);
+      return;
+    }
+    // 为了简化，并保持状态机清晰，强制在警徽移交后，检查游戏是否结束。
+    // 如果未结束，就进入遗言阶段。即使没有死者，遗言阶段也会直接进入 night_end。
+    // 这样，可以将流程统一到 goto_last_words。
+    await game.fsm.goto_last_words();
   }
 
   /**
@@ -3316,24 +3366,19 @@ export class WerewolfPlugin extends plugin {
   }
 
   /**
-   * 开始投票阶段。
-   * @param {string} groupId - 群组ID。
-   * @param {WerewolfGame} game - 游戏实例。
-   * @returns {Promise<void>}
-   */
-  /**
    * 开始遗言阶段。
    * @param {string} groupId - 群组ID。
    * @param {WerewolfGame} game - 游戏实例。
    */
   async startLastWordsPhase(groupId, game) {
-    game.gameState.status = 'last_words';
+    // 状态的设置由状态机 onEnterDay_last_words 钩子完成
+    // game.gameState.status = 'last_words'; // 已在状态机钩子中处理
     await this.saveGameField(groupId, game, 'gameState');
 
     const deadPlayers = game.gameState.recentlyDeceased || [];
     if (deadPlayers.length === 0) {
-      // 如果没有死人，直接继续流程
-      await this.continueAfterDeathEvent(groupId, game);
+      // 如果没有死人，直接回到 none 状态
+      await game.fsm.night_end();
       return;
     }
 
@@ -3346,10 +3391,17 @@ export class WerewolfPlugin extends plugin {
       await this.announceAndSetSpeechTimer(groupId, game);
     } else {
       // 理论上不应该发生，但作为保险
-      await this.continueAfterDeathEvent(groupId, game);
+      await game.fsm.night_end(); // 如果没有发言者，则结束状态机
     }
   }
 
+
+  /**
+ * 开始投票阶段。
+ * @param {string} groupId - 群组ID。
+ * @param {WerewolfGame} game - 游戏实例。
+ * @returns {Promise<void>}
+ */
   async startVotingPhase(groupId, game, e) {
     game.gameState.status = 'day_vote'
     game.gameState.deadline = Date.now() + this.VOTE_DURATION // 设置投票截止时间
@@ -3440,23 +3492,16 @@ export class WerewolfPlugin extends plugin {
     if (result.gameEnded) {
       await this.endGameFlow(groupId, game, result.winner);
     } else if (playerKicked && playerKicked.userId === game.gameState.sheriffUserId) {
-      game.gameState.lastStableStatus = game.gameState.status;
-      await this.startSheriffPassBadgePhase(groupId, game, playerKicked.userId);
+      await game.fsm.goto_pass_badge();
     } else if (result.needsHunterShoot) {
-      game.gameState.lastStableStatus = game.gameState.status;
-      await this.startHunterShootPhase(groupId, game);
+      await game.fsm.goto_hunter_shoot();
     } else if (result.needsWolfKingClaw) {
-      await this.startWolfKingClawPhase(groupId, game);
+      await this.startWolfKingClawPhase(groupId, game); // 狼王技能暂不纳入状态机
     } else {
       if (playerKicked) {
-        // 在进入遗言阶段前，必须先记录下我们是从投票阶段过来的。
-        // `game.gameState.status` 此刻的值就是 'day_vote'。
-        game.gameState.lastStableStatus = game.gameState.status;
-
-        // 进入白天发言阶段（用于发表遗言）
-        await this.startLastWordsPhase(groupId, game);
+        await game.fsm.goto_last_words(); // 进入遗言阶段
       } else {
-        // 如果没人出局（平票），直接进入夜晚
+        await game.fsm.night_end(); // 如果没人出局（平票），直接进入夜晚
         await this.transitionToNextPhase(groupId, game, 'night_phase_1');
       }
     }
@@ -3499,9 +3544,8 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(groupId, game, gameStatus.winner);
     } else {
-      game.gameState.status = 'day_speak'; // 回到白天发言阶段
-      await this.saveGameAll(groupId, game)
-      await this.transitionToNextPhase(groupId, game, 'day_speak')
+      await game.fsm.night_end(); // 将状态机重置为 'none'
+      await this.continueAfterDeathEvent(groupId, game); // 继续处理死亡事件后的游戏流程
     }
   }
 
@@ -3557,9 +3601,10 @@ export class WerewolfPlugin extends plugin {
     if (gameStatus.isEnd) {
       await this.endGameFlow(groupId, game, gameStatus.winner);
     } else {
-      game.gameState.status = 'night_phase_1'; // 进入夜晚第一阶段
-      await this.saveGameAll(groupId, game);
-      await this.transitionToNextPhase(groupId, game, 'night_phase_1');
+      // 狼王技能处理完毕，结束当前死亡处理流程，回到 none 状态
+      await game.fsm.night_end();
+      // 继续死亡事件后的流程
+      await this.continueAfterDeathEvent(groupId, game);
     }
   }
 
@@ -3628,31 +3673,18 @@ export class WerewolfPlugin extends plugin {
       return;
     }
 
-    // 3. 如果游戏没结束，判断下一步该去哪
-    switch (game.gameState.lastStableStatus) {
-      case 'night_phase_2':
-        // 场景：夜晚死亡（包括猎人）后开枪。
-        // 动作：继续进行白天流程。
-        // 只有在夜晚死亡事件后，才需要判断是否开启警长竞选或进入白天
-        // 如果是从遗言阶段过来的，说明已经处理完死亡，现在应该进入常规白天
-        if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
-          await this.startSheriffElectionPhase(groupId, game);
-        } else {
-          await this.transitionToNextPhase(groupId, game, 'day_speak');
-        }
-        break;
+    // 3. 如果游戏没结束，判断下一步该去哪 (由状态机统一协调)
+    // 死亡事件处理完毕后，状态机应该已通过 night_end 转换回 'none'。
+    // 在此，我们根据游戏规则决定下一步的主流程。
 
-      case 'day_vote':
-        // 场景：白天被票死（包括猎人）后开枪 或 发表遗言。
-        // 动作：结束白天，进入夜晚。
-        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
-        break;
-
-      default:
-        // 如果没有上一个状态记录（作为保险），默认进入夜晚
-        console.warn(`[${PLUGIN_NAME}] 无法确定上一个稳定状态，默认进入夜晚。`);
-        await this.transitionToNextPhase(groupId, game, 'night_phase_1');
-        break;
+    // 如果是第一天且有警长竞选规则且警长未诞生，则进入警长竞选报名阶段
+    if (game.gameState.currentDay === 1 && game.gameState.hasSheriff && !game.gameState.sheriffUserId) {
+      console.log(`[${PLUGIN_NAME}] continueAfterDeathEvent: 条件满足，进入警长竞选流程。`);
+      await this.startSheriffElectionPhase(groupId, game);
+    } else {
+      // 否则，所有死亡事件处理完毕，进入白天发言阶段
+      console.log(`[${PLUGIN_NAME}] continueAfterDeathEvent: 进入常规白天发言阶段。`);
+      await this.transitionToNextPhase(groupId, game, 'day_speak');
     }
   }
 
