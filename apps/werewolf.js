@@ -1575,12 +1575,9 @@ export class WerewolfPlugin extends plugin {
     const msg = e.msg || e.raw_message || '';
     const match = msg.match(/^#创建狼人杀(?:\s+(.+))?$/);
     const presetNameInput = match && match[1] ? match[1].trim() : 'default';
-    console.log(`[${PLUGIN_NAME}] Debug: msg = '${msg}'`);
-    console.log(`[${PLUGIN_NAME}] Debug: presetNameInput = '${presetNameInput}'`);
     
     // 检查输入的板子名称是否存在于预设中，如果不存在则使用 'default'
     const chosenPresetName = GAME_PRESETS[presetNameInput] ? presetNameInput : 'default';
-    console.log(`[${PLUGIN_NAME}] Debug: chosenPresetName = '${chosenPresetName}'`);
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname);
     const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, chosenPresetName);
