@@ -2609,6 +2609,27 @@ export class WerewolfPlugin extends plugin {
       }
     }
   }
+/**
+   * 开始警长竞选报名阶段。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   */
+  async startSheriffElectionPhase(groupId, game) {
+    if (!game) return;
+
+    game.gameState.status = 'sheriff_election_signup';
+    game.gameState.isSheriffElection = true; // 开启警长竞选总开关
+    game.gameState.candidateList = []; // 清空上一轮的候选人
+    game.gameState.sheriffVotes = {}; // 清空上一轮的投票
+
+    const duration = this.SHERIFF_SIGNUP_DURATION;
+    game.gameState.deadline = Date.now() + duration;
+    await redis.zAdd(DEADLINE_KEY, [{ score: game.gameState.deadline, value: String(groupId) }]);
+    await this.saveGameAll(groupId, game);
+
+    const announcement = `--- 警长竞选 ---\n本局游戏有警长职位。现在开始警长竞选报名，时长 ${duration / 1000} 秒。\n想要竞选警长的玩家请发送【#上警】。`;
+    await this.sendSystemGroupMsg(groupId, announcement);
+  }
 
   /**
    * 处理 #上警 命令。
