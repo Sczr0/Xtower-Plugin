@@ -1774,6 +1774,7 @@ export class WerewolfPlugin extends plugin {
    * @returns {Promise<boolean>} 是否成功处理。
    */
   async handleNightAction(e) {
+    console.log(`[DEBUG] 进入 handleNightAction，收到来自 ${e.user_id} 的指令: ${e.msg}`);
     const userId = e.user_id;
 
     const gameInfo = await this.findUserActiveGame(userId);
@@ -1828,7 +1829,15 @@ export class WerewolfPlugin extends plugin {
     }
 
     // 调用 recordNightAction，它内部会负责验证和 push 到 pendingNightActions
+    // --- DEBUG START ---
+    console.log(`[DEBUG] 调用 recordNightAction 之前:`, JSON.stringify(game.gameState.pendingNightActions));
+    // --- DEBUG END ---
+
     const result = game.recordNightAction(role, userId, { type, targetTempId });
+
+    // --- DEBUG START ---
+    console.log(`[DEBUG] 调用 recordNightAction 之后:`, JSON.stringify(game.gameState.pendingNightActions));
+    // --- DEBUG END ---
 
     if (result.success) {
       await this.saveGameField(groupId, game, 'gameState');
@@ -1858,6 +1867,10 @@ export class WerewolfPlugin extends plugin {
         });
         voteStatusMsg += "========================";
 
+        // --- DEBUG START ---
+        console.log(`[DEBUG] 准备发送给 ${userId} 的消息: \n${voteStatusMsg}`);
+        // --- DEBUG END ---
+        
         // 给当前操作者即时反馈
         await this.sendDirectMessage(userId, voteStatusMsg, groupId);
 
@@ -1913,6 +1926,7 @@ export class WerewolfPlugin extends plugin {
     if (!chatContent) {
       return e.reply('狼聊内容不能为空。');
     }
+
 
     // 5. 找到所有其他的狼队友
     const werewolfTeammates = game.players.filter(p =>
@@ -2638,7 +2652,7 @@ export class WerewolfPlugin extends plugin {
    */
   async handleSheriffSignup(e) {
     if (e.is_group) {
-      return e.reply('为了防止暴露身份，请私聊我发送【#上警】来参与竞选。', true);
+      return e.reply('请私聊发送【#上警】来参与竞选。', true);
     }
     // 1. 获取当前游戏实例
     const gameInfo = await this.findUserActiveGame(e.user_id);
@@ -2658,9 +2672,6 @@ export class WerewolfPlugin extends plugin {
     if (result.success) {
       // 成功上警，私聊回复
       await e.reply(result.message, false); //私聊消息不需要at
-      // 在群里发一个公告
-      const player = result.player;
-      await this.sendSystemGroupMsg(groupId, `「${player.nickname}」(${player.tempId}号) 已上警！`);
     } else {
       // 如果上警失败（比如重复上警），则私聊回复他原因
       return e.reply(result.message, false);
