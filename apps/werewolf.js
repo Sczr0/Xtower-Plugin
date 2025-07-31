@@ -2849,6 +2849,35 @@ export class WerewolfPlugin extends plugin {
     }
   }
 
+/**
+   * 开始警长投票阶段。
+   * @param {string} groupId - 群组ID。
+   * @param {WerewolfGame} game - 游戏实例。
+   */
+  async startSheriffVotePhase(groupId, game) {
+    game.gameState.status = 'sheriff_vote';
+    await this.saveGameField(groupId, game, 'gameState');
+
+    // 在发言结束后，所有存活玩家应该都被解禁了，以进行投票
+    await this.unmuteAllPlayers(groupId, game, true);
+    
+    const candidateInfos = game.gameState.candidateList
+      .map(userId => game.getPlayerInfo(userId))
+      .filter(info => info && info !== '未知玩家')
+      .join('、');
+
+    await this.sendSystemGroupMsg(groupId, `现在开始为警长候选人投票。\n请在 ${this.SHERIFF_VOTE_DURATION / 1000} 秒内发送 #投警长 [编号] 进行投票。\n候选人：${candidateInfos}`);
+
+    // 设置警长投票截止计时器
+    this.setPhaseTimer(groupId, game, this.SHERIFF_VOTE_DURATION, async () => {
+      const freshGame = await this.getGameInstance(groupId);
+      // 再次检查状态，防止重复执行
+      if (freshGame && freshGame.gameState.status === 'sheriff_vote') {
+        await this.sendSystemGroupMsg(groupId, "警长投票时间结束，正在计票...");
+        await this.processSheriffVoteEnd(groupId, freshGame);
+      }
+    });
+  }
   /**
    * 处理 #投警长 命令。
    * @param {object} e - 消息事件对象。
