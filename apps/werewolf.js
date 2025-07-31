@@ -1472,8 +1472,8 @@ export class WerewolfPlugin extends plugin {
     this.userToGroupCache = new Map(); // 用户ID到群组ID的映射缓存
     this.phaseTimers = new Map();      // 存储每个群组的阶段计时器
     // 游戏阶段持续时间常量
-    this.WEREWOLF_PHASE_DURATION = 60 * 1000; // 狼人行动阶段时长
-    this.WITCH_ACTION_DURATION = 30 * 1000;   // 女巫单独行动阶段时长
+    this.WEREWOLF_PHASE_DURATION = 20 * 1000; // 狼人行动阶段时长
+    this.WITCH_ACTION_DURATION = 10 * 1000;   // 女巫单独行动阶段时长
     this.SHERIFF_SIGNUP_DURATION = 60 * 1000;   // 警长竞选报名时长
     this.SHERIFF_SPEECH_DURATION = 60 * 1000;   // 警长竞选发言时长
     this.SHERIFF_VOTE_DURATION = 45 * 1000;     // 警长竞选投票时长
@@ -1481,6 +1481,7 @@ export class WerewolfPlugin extends plugin {
     this.VOTE_DURATION = 60 * 1000;           // 投票阶段时长
     this.HUNTER_SHOOT_DURATION = 30 * 1000;   // 猎人开枪时长
     this.WOLF_KING_CLAW_DURATION = 30 * 1000; // 狼王发动技能时长
+    this.LAST_WORDS_DURATION = 60 * 1000;           // 遗言阶段时长
   }
 
   /**
@@ -1643,7 +1644,7 @@ export class WerewolfPlugin extends plugin {
     // 尝试发送私聊消息，确认机器人可以私聊玩家
     const reachable = await this.sendDirectMessage(
       e.user_id,
-      `[${PLUGIN_NAME}] 游戏加入成功！\n我们已确认可以向您发送私聊消息。`,
+      `[${PLUGIN_NAME}] 游戏加入成功！\n我们已确认可以向您发送私聊消息`,
       groupId,
       false // 不在私聊失败时通知群聊，因为此时玩家可能还未加入
     );
@@ -1945,7 +1946,8 @@ export class WerewolfPlugin extends plugin {
     const groupId = e.group_id;
     if (!groupId) return;
     const game = await this.getGameInstance(groupId);
-    if (!game || game.gameState.status !== 'day_speak') return;
+    const validSpeechStatuses = ['day_speak', 'sheriff_speech', 'last_words'];
+    if (!game || !validSpeechStatuses.includes(game.gameState.status)) return;
     if (game.gameState.currentSpeakerUserId !== e.user_id) return e.reply("现在不是你的发言时间哦。", false, { at: true });
 
     const speaker = game.players.find(p => p.userId === e.user_id);
@@ -2894,6 +2896,8 @@ export class WerewolfPlugin extends plugin {
       currentPhaseDuration = this.SPEECH_DURATION;
     } else if (game.gameState.status === 'sheriff_speech') {
       currentPhaseDuration = this.SHERIFF_SPEECH_DURATION;
+    } else if (game.gameState.status === 'last_words') {
+      currentPhaseDuration = this.LAST_WORDS_DURATION;
     } else {
       return; // 如果不是任何发言阶段，则直接退出
     }
@@ -2929,7 +2933,7 @@ export class WerewolfPlugin extends plugin {
     }
 
     // 根据阶段添加不同的提示
-    if (game.gameState.status === 'day_speak') {
+    if (game.gameState.status === 'day_speak' || game.gameState.status === 'last_words') {
       msg.push('发送#结束发言或“过”以结束你的发言。');
     } else if (game.gameState.status === 'sheriff_speech') {
       msg.push('你可以随时发送【#退水】来退出竞选。');
