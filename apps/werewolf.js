@@ -1574,8 +1574,10 @@ export class WerewolfPlugin extends plugin {
     // e.match[0] 是整个匹配到的字符串，例如 "#创建狼人杀 预女猎白"
     // e.match[1] 是第一个捕获组的内容，即板子名称 "预女猎白"
     const presetNameInput = e.match && e.match[1] ? e.match[1].trim() : 'default';
+    console.log(`[${PLUGIN_NAME}] Debug: presetNameInput = '${presetNameInput}'`);
     // 检查输入的板子名称是否存在于预设中，如果不存在则使用 'default'
     const chosenPresetName = GAME_PRESETS[presetNameInput] ? presetNameInput : 'default';
+    console.log(`[${PLUGIN_NAME}] Debug: chosenPresetName = '${chosenPresetName}'`);
 
     game = await this.getGameInstance(groupId, true, e.user_id, e.sender.card || e.sender.nickname);
     const initResult = await game.initGame(e.user_id, e.sender.card || e.sender.nickname, groupId, chosenPresetName);
@@ -1813,15 +1815,15 @@ export class WerewolfPlugin extends plugin {
         });
         voteStatusMsg += "========================";
 
-      // 给当前操作者即时反馈
-      await this.sendDirectMessage(userId, voteStatusMsg, groupId);
+        // 给当前操作者即时反馈
+        await this.sendDirectMessage(userId, voteStatusMsg, groupId);
 
-      // 遍历并通知其他狼人，避免重复发送
-      for (const wolf of livingWerewolves) {
-        if (wolf.userId !== userId) {
-          await this.sendDirectMessage(wolf.userId, voteStatusMsg, groupId);
+        // 遍历并通知其他狼人，避免重复发送
+        for (const wolf of livingWerewolves) {
+          if (wolf.userId !== userId) {
+            await this.sendDirectMessage(wolf.userId, voteStatusMsg, groupId);
+          }
         }
-      }
       } else {
         e.reply(result.message);
       }
