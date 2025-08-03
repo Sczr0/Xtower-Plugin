@@ -24,7 +24,7 @@ const GAME_PRESETS = {
     name: '默认板子 (6-15人)',
     playerCount: { min: 3, max: 15 },
     roles: null,
-    hasSheriff: true,
+    hasSheriff: false,
     ruleset: '屠城' // 默认规则是屠城
   },
   '屠边局': {
@@ -1520,6 +1520,7 @@ export class WerewolfPlugin extends plugin {
         { reg: '^#上警$', fnc: 'handleSheriffSignup' },
         { reg: '^#退水$', fnc: 'handleSheriffWithdraw' },
         { reg: '^#投警长\\s*(\\d+)$', fnc: 'handleSheriffVote' },
+        { reg: '^#(顺序|逆序)(发言)?$', fnc: 'handleSheriffSetOrder' },
         { reg: '^#(移交警徽|撕掉警徽)\\s*(\\d*)$', fnc: 'handleSheriffPassBadge', permission: 'private' },
         { reg: '^#?(结束发言|过)$', fnc: 'handleEndSpeech' },
         { reg: '^#投票\\s*(\\d+|弃票)$', fnc: 'handleVote' },
@@ -3086,30 +3087,30 @@ export class WerewolfPlugin extends plugin {
       return e.reply("你不是警长，无法决定发言顺序。", true);
     }
 
-    this.clearPhaseTimer(groupId); // 清除超时定时器
+    // 清除超时定时器
+    this.clearPhaseTimer(groupId);
+    game.gameState.deadline = null;
+    await redis.zRem(DEADLINE_KEY, String(groupId));
 
-    const setOrder = e.msg.includes('逆序') ? 'desc' : 'asc';
-    const setterIndex = game.players.findIndex(p => p.userId === e.user_id);
+    const order = e.msg.includes('逆序') ? 'desc' : 'asc';
+    const sheriffIndex = game.players.findIndex(p => p.userId === game.gameState.sheriffUserId);
 
-    await this.sendSystemGroupMsg(groupId, `警长已选择${setOrder === 'asc' ? '顺序' : '逆序'}发言。`);
+    if (sheriffIndex === -1) {
+      // This should not happen if the previous checks are correct
+      return;
+    }
 
-    game.setSpeakingOrder(setterIndex, setOrder);
+    // 从警长开始，只包含活着的玩家
+    game.setSpeakingOrder(sheriffIndex, order, true);
 
-    // 操作完成，将警长重新禁言
+    await this.sendSystemGroupMsg(groupId, `警长选择了【${order === 'asc' ? '顺序' : '逆序'}】发言。`);
+
+    // 警长做完决定，重新禁言，等待轮到他发言时再解禁
     if (game.gameState.hasPermission) {
       await this.mutePlayer(groupId, e.user_id, 3600);
     }
 
     // 转换到白天发言阶段
-    await this.transitionToNextPhase(groupId, game, 'day_speak');
-
-    const order = e.msg.includes('#顺序') ? 'asc' : 'desc';
-    const sheriffIndex = game.players.findIndex(p => p.userId === game.gameState.sheriffUserId);
-
-    game.setSpeakingOrder(sheriffIndex, order);
-
-    await this.sendSystemGroupMsg(groupId, `警长选择了【${order === 'asc' ? '顺序' : '逆序'}】发言。`);
-
     await this.transitionToNextPhase(groupId, game, 'day_speak');
   }
 
@@ -3767,6 +3768,18 @@ export class WerewolfPlugin extends plugin {
             await this.saveGameAll(groupId, game);
             // 调用收尾方法继续流程
             await this.continueAfterDeathEvent(groupId, game);
+            break;
+          case 'sheriff_sets_order':
+            await this.sendSystemGroupMsg(groupId, `警长超时未选择，默认从警长开始顺序发言。`);
+            const sheriffIndex = game.players.findIndex(p => p.userId === game.gameState.sheriffUserId);
+            if (sheriffIndex !== -1) {
+              game.setSpeakingOrder(sheriffIndex, 'asc', true);
+            }
+            // 警长超时，也应该被禁言
+            if (game.gameState.hasPermission && game.gameState.sheriffUserId) {
+              await this.mutePlayer(groupId, game.gameState.sheriffUserId, 3600);
+            }
+            await this.transitionToNextPhase(groupId, game, 'day_speak');
             break;
           case 'day_vote': await this.processVoteEnd(groupId, game); break
           case 'hunter_shooting': await this.processHunterShootEnd(groupId, game); break
