@@ -179,7 +179,7 @@ export class RussianRoulette extends plugin {
     const game = gameStates.get(groupId); if (!game || game.phase !== 'waiting') return; if (game.players.length < 2) { gameStates.delete(groupId); Bot.sendGroupMsg(groupId, '参与人数不足，赌局已解散。'); return; } game.players.sort(() => Math.random() - 0.5); game.cylinder = Array(game.cylinderCapacity).fill(0); for (let i = 0; i < game.bulletCount; i++) game.cylinder[i] = 1; game.cylinder.sort(() => Math.random() - 0.5); game.phase = 'playing'; game.currentPosition = Math.floor(Math.random() * game.cylinderCapacity); logger.info(`[俄罗斯转盘] 群 ${groupId} 游戏开始，弹巢容量: ${game.cylinderCapacity}, 子弹: ${game.bulletCount}, 弹巢状态: ${game.cylinder.join('')}`); await Bot.sendGroupMsg(groupId, '赌局已满，命运的齿轮开始转动...'); this.announceTurn(groupId);
   }
   async announceTurn (groupId) {
-    const game = gameStates.get(groupId); if (!game || game.phase !== 'playing') return; const currentPlayer = game.players[game.turnIndex]; const skillInfo = []; if (currentPlayer.spinsLeft > 0) skillInfo.push(`旋转(${currentPlayer.spinsLeft})`); if (currentPlayer.foresightLeft > 0) skillInfo.push(`预知(${currentPlayer.foresightLeft})`); if (currentPlayer.skipsLeft > 0) skillInfo.push(`跳过(${currentPlayer.skipsLeft})`); let actionPrompt; if (skillInfo.length > 0) { actionPrompt = `你的可用技能：【${skillInfo.join('】【')}】\n你可以使用技能，或直接【#开枪】。`; } else { actionPrompt = '你已无计可施，命运已定。\n请直接【#开枪】。'; } const msg = [`轮到 `, segment.at(currentPlayer.id), ` 了。\n`, `当前幸存者: ${game.players.length}人。\n`, actionPrompt]; Bot.sendGroupMsg(groupId, msg);
+    const game = gameStates.get(groupId); if (!game || game.phase !== 'playing') return; const currentPlayer = game.players[game.turnIndex]; const skillInfo = []; if (currentPlayer.spinsLeft > 0) skillInfo.push(`旋转(${currentPlayer.spinsLeft})`); if (currentPlayer.foresightLeft > 0) skillInfo.push(`预知(${currentPlayer.foresightLeft})`); if (currentPlayer.skipsLeft > 0) skillInfo.push(`跳过(${currentPlayer.skipsLeft})`); let actionPrompt; if (skillInfo.length > 0) { actionPrompt = `你的可用技能：【${skillInfo.join('】【')}】\n你可以使用技能，或直接【#开枪】。`; } else { actionPrompt = '你已无计可施，命运已定。\n请选择【#开枪】，【#开枪】或者【#开枪】'; } const msg = [`轮到 `, segment.at(currentPlayer.id), ` 了。\n`, `当前幸存者: ${game.players.length}人。\n`, actionPrompt]; Bot.sendGroupMsg(groupId, msg);
   }
 
   async spinCylinder (e) {
@@ -193,7 +193,7 @@ export class RussianRoulette extends plugin {
       logger.info(`[俄罗斯转盘] 玩家 ${e.user_id} 旋转了弹巢，当前位置 ${game.currentPosition}，剩余旋转 ${currentPlayer.spinsLeft}次`)
       return e.reply(`你消耗了一次机会拨动了弹巢... 还剩下 ${currentPlayer.spinsLeft} 次旋转机会。`, true)
     } else {
-      return e.reply('你已经没有旋转的机会了，开枪吧！', true)
+      return e.reply('你已经没有旋转的机会了。', true)
     }
   }
 
@@ -215,7 +215,7 @@ export class RussianRoulette extends plugin {
       ` 使用了预知技能！（剩余 ${currentPlayer.foresightLeft} 次）\n`,
       '命运的启示已向众人揭晓...\n\n',
       `${resultText}\n\n`,
-      `请根据这个结果选择你的行动：【#开枪】${skipOptionText}`
+      `请根据这个结果选择你的行动：【#开枪】,【#旋转】${skipOptionText}`
     ]
     await e.reply(finalMsg, true)
     return true // 显式地结束当前事件处理
