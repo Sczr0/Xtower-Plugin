@@ -325,7 +325,7 @@ class WerewolfGame {
         { name: 'goto_hunter_shoot', from: 'night_result_announcement', to: 'event_hunter_shoot' },
         { name: 'goto_pass_badge', from: 'night_result_announcement', to: 'event_pass_badge' },
         { name: 'goto_last_words', from: ['night_result_announcement', 'event_hunter_shoot', 'event_pass_badge'], to: 'day_last_words' },
-        { name: 'night_end', from: ['event_hunter_shoot', 'event_pass_badge', 'day_last_words'], to: 'none' }, // 死亡事件处理完毕，回到无状态
+        { name: 'night_end', from: ['night_result_announcement', 'event_hunter_shoot', 'event_pass_badge', 'day_last_words'], to: 'none' }, // 死亡事件处理完毕，回到无状态
       ],
       methods: {
         onEnterNone: async function () { // 添加 async 因为 continueAfterDeathEvent 是 async 函数
