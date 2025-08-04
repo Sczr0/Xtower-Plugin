@@ -1538,9 +1538,9 @@ export class WerewolfPlugin extends plugin {
     this.phaseTimers = new Map();      // 存储每个群组的阶段计时器
     this.signupLocks = new Map();      // 为警长报名创建专门的锁
     // 游戏阶段持续时间常量
-    this.WEREWOLF_PHASE_DURATION = 20 * 1000; // 狼人行动阶段时长
-    this.WITCH_ACTION_DURATION = 10 * 1000;   // 女巫单独行动阶段时长
-    this.SHERIFF_SIGNUP_DURATION = 20 * 1000;   // 警长竞选报名时长
+    this.WEREWOLF_PHASE_DURATION = 40 * 1000; // 狼人行动阶段时长
+    this.WITCH_ACTION_DURATION = 30 * 1000;   // 女巫单独行动阶段时长
+    this.SHERIFF_SIGNUP_DURATION = 60 * 1000;   // 警长竞选报名时长
     this.SHERIFF_SPEECH_DURATION = 60 * 1000;   // 警长竞选发言时长
     this.SHERIFF_VOTE_DURATION = 45 * 1000;     // 警长竞选投票时长
     this.SPEECH_DURATION = 60 * 1000;         // 白天发言时长
