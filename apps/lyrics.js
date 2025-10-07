@@ -379,16 +379,23 @@ export class LyricsPlugin extends plugin {
         }
 
         const results = [];
-        const LIMIT = 5; // 默认返回前 5 条匹配片段
+        const LIMIT = 10; // 默认返回前 10 条匹配片段
+
+        // 转义关键词以安全用于正则
+        const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escaped = escapeRegExp(keywordRaw);
+        const testRegex = new RegExp(escaped, 'i');
+        const replaceRegex = new RegExp(escaped, 'gi');
 
         for (const filePath of files) {
             try {
                 const content = fs.readFileSync(filePath, 'utf-8').replace(/\r\n?/g, '\n');
                 const chunks = content.split('\n\n').filter(s => s.trim() !== '');
                 for (const chunk of chunks) {
-                    if (chunk.toLowerCase().includes(keyword)) {
+                    if (testRegex.test(chunk)) {
                         const author = `— ${path.basename(filePath, '.txt')}`;
-                        results.push(`${chunk}\n${author}`);
+                        const highlighted = chunk.replace(replaceRegex, '「$&」');
+                        results.push(`${highlighted}\n${author}`);
                         if (results.length >= LIMIT) break;
                     }
                 }
