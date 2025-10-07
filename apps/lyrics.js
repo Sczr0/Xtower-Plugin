@@ -71,6 +71,7 @@ export class LyricsPlugin extends plugin {
             rule: [
                 { reg: '^#?抽歌词\\s*(-riv)?$', fnc: 'drawLyrics' },
                 { reg: '^#?抽歌词\\s+(\\d+)\\s*(-riv)?$', fnc: 'batchDraw' },
+                { reg: '^#?(?:歌词检索|搜歌词)\\s+(.+)$', fnc: 'searchLyrics' },
                 { reg: '^#获取歌词\\s+(.+?)\\s+(.+)$', fnc: 'fetchFromRepo' },
                 { reg: '^#新建歌词仓库\\s+(.+)\\s+(.+)$', fnc: 'addRepo' },
                 { reg: '^#删除歌词仓库\\s+(.+)$', fnc: 'removeRepo' },
@@ -341,6 +342,73 @@ export class LyricsPlugin extends plugin {
 
         const msg = await common.makeForwardMsg(e, lyricsList, `[随机歌词] x${count}`);
         await e.reply(msg);
+    }
+
+    // 歌词检索：按群映射库或公共库搜索关键字
+    async searchLyrics(e) {
+        const match = e.msg.match(/^#?(?:歌词检索|搜歌词)\s+(.+)$/);
+        if (!match) {
+            return await e.reply('[随机歌词] 用法：#歌词检索 关键词');
+        }
+
+        const keywordRaw = match[1].trim();
+        if (!keywordRaw) {
+            return await e.reply('[随机歌词] 请输入要检索的关键词。');
+        }
+
+        const keyword = keywordRaw.toLowerCase();
+        // 依据群配置获取检索目录：
+        // - 群未关联或私聊：使用公共库
+        // - 已关联：仅检索该库
+        const groupId = String(e.group_id);
+        const targetDir = this.#getTargetDir(groupId);
+
+        // 若目录不存在或为空，尝试刷新缓存后判断
+        this.#refreshCache(targetDir);
+
+        let files = [];
+        try {
+            // 递归检索该库下所有 txt
+            files = await glob('**/*.txt', { cwd: targetDir, absolute: true, nodir: true });
+        } catch (err) {
+            this.logger.error('检索时列举文件失败:', err);
+        }
+
+        if (!files || files.length === 0) {
+            return await e.reply(`[随机歌词] 目标歌词库为空或不可用：${targetDir}`);
+        }
+
+        const results = [];
+        const LIMIT = 5; // 默认返回前 5 条匹配片段
+
+        for (const filePath of files) {
+            try {
+                const content = fs.readFileSync(filePath, 'utf-8').replace(/\r\n?/g, '\n');
+                const chunks = content.split('\n\n').filter(s => s.trim() !== '');
+                for (const chunk of chunks) {
+                    if (chunk.toLowerCase().includes(keyword)) {
+                        const author = `— ${path.basename(filePath, '.txt')}`;
+                        results.push(`${chunk}\n${author}`);
+                        if (results.length >= LIMIT) break;
+                    }
+                }
+                if (results.length >= LIMIT) break;
+            } catch (err) {
+                // 单个文件读取失败不影响整体
+                this.logger.warn('读取歌词文件失败（已跳过）:', filePath, err?.message || err);
+            }
+        }
+
+        if (results.length === 0) {
+            return await e.reply(`[随机歌词] 未在当前歌词库检索到：${keywordRaw}`);
+        }
+
+        if (results.length === 1) {
+            return await e.reply(results[0]);
+        }
+
+        const forward = await common.makeForwardMsg(e, results, `[歌词检索] 命中 ${results.length} 条`);
+        await e.reply(forward);
     }
 
     // ================= 管理功能 =================
