@@ -171,7 +171,7 @@ export class undercover extends plugin {
       const eliminatedPlayer = room.players.find(p => p.id === Number(eliminatedPlayerId));
       eliminatedPlayer.isAlive = false;
       
-      await e.reply(`${voteResultMsg}\n大家的手指向了同一个人... 惨遭淘汰的是【${eliminatedPlayer.name}】！\n\n他的真实身份是...【${eliminatedPlayer.role}】！词语是【${eliminatedPlayer.word}】。`);
+      await e.reply(`${voteResultMsg}\n大家的手指向了同一个人... 惨遭淘汰的是【${eliminatedPlayer.name}】！\n\n他的真实身份是...【${eliminatedPlayer.role}】！`);
       
       if (!await this.checkWinCondition(e, room)) {
         await this.startNextRound(e, room);
