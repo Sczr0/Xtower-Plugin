@@ -6,6 +6,7 @@ import path from 'node:path';
 const WAITING_TIMEOUT = 5 * 60 * 1000; // 等待阶段超时时间 (5分钟)
 const SPEAKING_TIMEOUT = 45 * 1000;   // 发言阶段超时时间 (45秒)
 const VOTING_TIMEOUT = 45 * 1000;     // 投票阶段超时时间 (45秒)
+const VOTE_GRACE = 1500;              // 投票截止后的缓冲期，避免临界竞态 (1.5秒)
 
 // 游戏数据存储在内存中
 const gameRooms = {};
@@ -109,6 +110,7 @@ export class undercover extends plugin {
     this.clearTimer(room);
     room.status = 'voting';
     room.votes = {};
+    room.voteDeadline = Date.now() + VOTING_TIMEOUT; // 记录截止时间，便于竞态控制
     let voteMsg = '🗣️ 所有玩家陈述完毕，投票环节到！\n\n';
     voteMsg += this.getPlayerList(room);
     voteMsg += `\n\n投出你心中最可疑的那个人吧！\n`;
@@ -119,7 +121,13 @@ export class undercover extends plugin {
       const currentRoom = this.getRoom(e.group_id);
       if (currentRoom && currentRoom.status === 'voting') {
         e.reply('⏰ 投票时间到！现在开始统计票数...');
-        this.tallyVotes(e, currentRoom);
+        // 给出极短缓冲时间，确保临界点发送的投票能被记录
+        currentRoom.timerId = setTimeout(() => {
+          const r = this.getRoom(e.group_id);
+          if (r && r.status === 'voting') {
+            this.tallyVotes(e, r);
+          }
+        }, VOTE_GRACE);
       }
     }, VOTING_TIMEOUT);
   }
