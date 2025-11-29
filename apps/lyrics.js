@@ -379,7 +379,7 @@ export class LyricsPlugin extends plugin {
         }
 
         const results = [];
-        const LIMIT = 10; // 默认返回前 10 条匹配片段
+        const LIMIT = 100; // 默认返回前 100 条匹配片段
 
         // 转义关键词以安全用于正则
         const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
