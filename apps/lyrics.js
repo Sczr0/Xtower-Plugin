@@ -3,7 +3,7 @@ import path from 'path';
 import fse from 'fs-extra';
 import common from '../../../lib/common/common.js';
 import { glob } from 'glob';
-import yaml from 'js-yaml'; // 新增：引入yaml库
+import { getConfigSection } from '../utils/config.js';
 
 // ================= 配置 =================
 // 定义常量
@@ -12,7 +12,6 @@ const LYRIC_ROOT = path.join(PLUGIN_ROOT, 'data', 'lyrics');
 const COMMON_LYRICS_DIR = path.join(LYRIC_ROOT, 'common_lyrics');
 const TEMP_DIR = path.join(PLUGIN_ROOT, 'data', 'temp');
 const LYRICS_DATA_CONFIG_PATH = path.join(LYRIC_ROOT, 'config.json'); // 修改：之前叫CONFIG_PATH，现在更明确是lyrics模块的数据配置
-const PLUGIN_MASTER_CONFIG_PATH = path.join(PLUGIN_ROOT, 'config', 'config.yaml'); // 新增：统一配置文件路径
 
 // 确保目录存在
 function ensureDirectoriesExist(directories) {
@@ -43,21 +42,6 @@ const DEFAULT_LYRICS_DATA_CONFIG = {
     }
     // batch_draw_max_count 将从 config.yaml 读取，不在此处定义默认值
 };
-
-// 新增：读取插件主配置文件 (config.yaml)
-function loadPluginMasterConfig() {
-    try {
-        if (fs.existsSync(PLUGIN_MASTER_CONFIG_PATH)) {
-            const fileContents = fs.readFileSync(PLUGIN_MASTER_CONFIG_PATH, 'utf8');
-            const data = yaml.load(fileContents);
-            return data || {}; // 返回空对象如果文件为空或解析结果为null/undefined
-        }
-        console.warn(`[Xtower-Plugin] 主配置文件 ${PLUGIN_MASTER_CONFIG_PATH} 未找到。`);
-    } catch (error) {
-        console.error(`[Xtower-Plugin] 加载或解析 ${PLUGIN_MASTER_CONFIG_PATH} 出错:`, error);
-    }
-    return {}; // 返回空对象如果文件不存在或出错
-}
 
 
 // ================= 插件主类 =================
@@ -97,11 +81,8 @@ export class LyricsPlugin extends plugin {
 
     // ================= 私有方法 =================
     #initSystem() {
-        // 1. 加载插件主配置 (config.yaml)
-        const masterConfig = loadPluginMasterConfig();
-
-        // 提取 lyrics 模块在主配置中的默认设置
-        const lyricsMasterDefaults = masterConfig.lyrics || {};
+        // 1. 通过统一入口加载主配置中的 lyrics 段
+        const lyricsMasterDefaults = getConfigSection('lyrics');
 
         // 2. 加载或初始化 lyrics 模块的动态数据配置 (lyrics_data_config.json)
         //    同时将 config.yaml 中的默认值按优先级合并进去

@@ -1,5 +1,3 @@
-import plugin from '../../lib/plugins/plugin.js'
-
 // --- 插件名称和功能开关 ---
 const PLUGIN_NAME = '狼人杀';
 const SELF_DESTRUCT_ENABLED = true; // 硬编码的自爆功能开关

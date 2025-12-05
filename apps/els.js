@@ -1,39 +1,8 @@
 import plugin from '../../../lib/plugins/plugin.js'
-import fs from 'fs'
-import path from 'path'
-import yaml from 'js-yaml'
+import { getConfigSection } from '../utils/config.js'
 
 // --- Configuration Loading ---
-const pluginName = 'Xtower-Plugin'
-const configPath = path.join(process.cwd(), 'plugins', pluginName, 'config', 'config.yaml')
-
-// 默认配置
-const defaultConfig = {
-  russianRoulette: {
-    initial_spins: 4,
-    initial_foresights: 1,
-    initial_skips: 1,
-    default_bullet_count: 1,
-    auto_start_delay_ms: 30000,
-    cylinder_capacity: 6
-  }
-}
-
-function loadGameConfig () {
-  let loadedConfig = {}
-  try {
-    if (fs.existsSync(configPath)) {
-      const yamlText = fs.readFileSync(configPath, 'utf8')
-      const fullConfig = yaml.load(yamlText) || {}
-      if (fullConfig.russianRoulette) {
-        loadedConfig = fullConfig.russianRoulette
-      }
-    }
-  } catch (error) {
-    logger.error(`[${pluginName} - RussianRoulette] Failed to load config: ${error}`)
-  }
-  return { ...defaultConfig.russianRoulette, ...loadedConfig }
-}
+const gameConfig = getConfigSection('russianRoulette')
 // --- End Configuration Loading ---
 
 const gameStates = new Map()
@@ -57,7 +26,8 @@ export class RussianRoulette extends plugin {
         { reg: '^#结束(转|轮)盘$', fnc: 'endGameByCreator' }
       ]
     })
-    this.gameConfig = loadGameConfig()
+    // 通过统一入口读取配置，确保与 config.yaml 保持一致
+    this.gameConfig = gameConfig
 
     const maxBulletsRegexPart = this.gameConfig.cylinder_capacity > 1 ? `[1-${Math.min(9, this.gameConfig.cylinder_capacity - 1)}]` : ''
     if (this.rule[0]) {

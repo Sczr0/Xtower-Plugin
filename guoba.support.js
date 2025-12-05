@@ -2,35 +2,13 @@ import path from 'path'
 import fs from 'fs'
 import yaml from 'js-yaml'
 import lodash from 'lodash'
+import { BASE_DEFAULTS, getConfigPath, loadConfig } from './utils/config.js'
 
 // 插件名称
 const pluginName = 'Xtower-Plugin'
 
 // 插件配置文件的路径
-const pluginConfigPath = path.join(process.cwd(), 'plugins', pluginName, 'config', 'config.yaml');
-
-// 默认配置，当插件首次加载或配置不存在时使用
-const defaultConfig = {
-  lyrics: {
-    rateLimit: {
-      maxPerHour: 10,
-      cooldown: 5000
-    },
-    batch_draw_max_count: 5
-  },
-  quickMath: {
-    answer_timeout_ms: 30000,
-    normal_mode_max_attempts: 3
-  },
-  russianRoulette: {
-    initial_spins: 4,
-    initial_foresights: 1,
-    initial_skips: 1,
-    default_bullet_count: 1,
-    auto_start_delay_ms: 30000,
-    cylinder_capacity: 6
-  }
-}
+const pluginConfigPath = getConfigPath()
 
 // 辅助函数：确保目录存在
 function ensureDirExists (filePath) {
@@ -208,7 +186,8 @@ export function supportGuoba () {
         } catch (error) {
           console.error(`[${pluginName}] Failed to read config file ${pluginConfigPath}:`, error)
         }
-        return lodash.merge({}, defaultConfig, savedConfig)
+        // 统一使用 BASE_DEFAULTS，确保各模块默认值一致
+        return lodash.merge({}, BASE_DEFAULTS, savedConfig)
       },
       // 设置配置的方法（前端点确定后调用的方法）
       setConfigData (data, { Result }) {
@@ -222,7 +201,8 @@ export function supportGuoba () {
           console.error(`[${pluginName}] Failed to read config file ${pluginConfigPath} before saving:`, error)
         }
 
-        let newConfig = lodash.merge({}, defaultConfig, currentConfig)
+        // 先合并统一默认值与当前配置，再叠加前端传入的变更
+        let newConfig = lodash.merge({}, BASE_DEFAULTS, currentConfig)
 
         for (const keyPath in data) {
           if (Object.prototype.hasOwnProperty.call(data, keyPath)) {
